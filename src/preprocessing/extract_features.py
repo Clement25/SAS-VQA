@@ -18,29 +18,7 @@ from datautils import svqa
 from transformers import CLIPImageProcessor
 
 
-def run_batch(cur_batch, model):
-    """
-    Args:
-        cur_batch: treat a video as a batch of images
-        model: ResNet model for feature extraction
-    Returns:
-        ResNet extracted feature.
-    """
-    mean = np.array([0.485, 0.456, 0.406]).reshape(1, 3, 1, 1)
-    std = np.array([0.229, 0.224, 0.224]).reshape(1, 3, 1, 1)
-
-    image_batch = cur_batch.astype(np.float32)
-    image_batch = (image_batch / 255.0 - mean) / std
-    image_batch = torch.FloatTensor(image_batch).cuda()
-    with torch.no_grad():
-        image_batch = torch.autograd.Variable(image_batch)
-
-    feats = model(image_batch)
-    feats = feats.data.cpu().clone().numpy()
-    return feats
-
-
-def extract_clips_with_consecutive_frames(path, num_clips, num_frames_per_clip):
+def extract_clips_with_consecutive_frames(path, num_clips, num_frames_per_clip=-1, intv=2):
     """
     Args:
         path: path of a video
@@ -58,7 +36,6 @@ def extract_clips_with_consecutive_frames(path, num_clips, num_frames_per_clip):
         if cap.isOpened():
             rval, frame = cap.read()
             while rval:
-                # rval, frame = cap.read()
                 b, g, r = cv2.split(frame)
                 frame = cv2.merge([r, g, b])
                 video_data.append(frame)
@@ -69,54 +46,16 @@ def extract_clips_with_consecutive_frames(path, num_clips, num_frames_per_clip):
         print('file {} error'.format(path))
         raise ValueError
         valid = False
-        if args.model == 'resnext101':
-            return list(np.zeros(shape=(num_clips, 3, num_frames_per_clip, 112, 112))), valid
-        else:
-            return list(np.zeros(shape=(num_clips, num_frames_per_clip, 3, 224, 224))), valid
+        return list(np.zeros(shape=(num_clips, num_frames_per_clip, 3, 224, 224))), valid
+    
     total_frames = len(video_data)
-    img_size = (args.image_height, args.image_width)
-    for i in np.linspace(0, total_frames, num_clips + 2, dtype=np.int32)[1:num_clips + 1]:  # [0 10 20 30 40]
-        clip_start = int(i) - int(num_frames_per_clip / 2)  # 2 12 22
-        clip_end = int(i) + int(num_frames_per_clip / 2)  # 18 28 38
-        if clip_start < 0:
-            clip_start = 0
-        if clip_end > total_frames:
-            clip_end = total_frames - 1
-        clip = video_data[clip_start:clip_end]
-        if clip_start == 0:  # beginning frames
-            shortage = num_frames_per_clip - (clip_end - clip_start)
-            added_frames = []
-            for _ in range(shortage):
-                added_frames.append(np.expand_dims(video_data[clip_start], axis=0))
-            if len(added_frames) > 0:
-                added_frames = np.concatenate(added_frames, axis=0)
-                clip = np.concatenate((added_frames, clip), axis=0)
-        if clip_end == (total_frames - 1):
-            shortage = num_frames_per_clip - (clip_end - clip_start)
-            added_frames = []
-            for _ in range(shortage):
-                added_frames.append(np.expand_dims(video_data[clip_end], axis=0))
-            if len(added_frames) > 0:
-                added_frames = np.concatenate(added_frames, axis=0)
-                clip = np.concatenate((clip, added_frames), axis=0)
-        new_clip = []
-        for j in range(num_frames_per_clip):
-            frame_data = clip[j]
-            img = Image.fromarray(frame_data)
-            img = img.resize(img_size, Image.BICUBIC)
-            #img = img.transpose(2, 0, 1)[None]
-            frame_data = np.array(img)
-            frame_data = np.transpose(frame_data, axes=(2, 0, 1))
-            new_clip.append(frame_data)
-        new_clip = np.asarray(new_clip)  # (num_frames, width, height, channels)
-        if args.model in ['resnext101']:
-            new_clip = np.squeeze(new_clip)
-            new_clip = np.transpose(new_clip, axes=(1, 0, 2, 3))
-        clips.append(new_clip)
-    return clips, valid
+    if num_frames_per_clip > 0: 
+        intv = total_frames // num_frames_per_clip
+    frames = video_data[::intv]
+    processed_frames = processor(frames, return_tensors="pt")
+    return processed_frames, valid
 
-
-def generate_h5(model, video_ids, num_clips, outfile):  # default-8
+def generate_h5(processor, video_ids, num_clips, outfile):  # default-8
     """
     Args:
         model: loaded pretrained model for feature extraction
@@ -130,7 +69,6 @@ def generate_h5(model, video_ids, num_clips, outfile):  # default-8
         os.makedirs('data/{}'.format(args.dataset))
 
     dataset_size = len(video_ids)  # paths
-
     with h5py.File(outfile, 'w') as fd:
         feat_dset = None
         video_ids_dset = None
@@ -143,7 +81,7 @@ def generate_h5(model, video_ids, num_clips, outfile):  # default-8
                 clip_feat = []
                 if valid:
                     for clip_id, clip in enumerate(clips):
-                        feats = run_batch(clip, model)
+                        feats = processor(clip)
                         feats = feats.squeeze()
                         clip_feat.append(feats)
                 else:
@@ -156,10 +94,11 @@ def generate_h5(model, video_ids, num_clips, outfile):  # default-8
                                                   dtype=np.float32)
                     video_ids_dset = fd.create_dataset('video_id', shape=(dataset_size,), dtype=np.int)
             elif args.feature_type == 'motion':
+                import ipdb; ipdb.set_trace()
                 clip_torch = torch.FloatTensor(np.asarray(clips)).cuda()
                 if valid:
                     print('====' * 50)
-                    clip_feat = model(clip_torch)  # (8, 2048)
+                    # clip_feat = model(clip_torch)
                     print('clip_feat:', clip_feat.shape)
                     clip_feat = clip_feat.squeeze()
                     clip_feat = clip_feat.detach().cpu().numpy()
@@ -185,28 +124,23 @@ def generate_h5(model, video_ids, num_clips, outfile):  # default-8
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--gpu_id', type=int, default=5, help='specify which gpu will be used')
+    
     # dataset info-选定数据集
     parser.add_argument('--dataset', default='msvd-qa', choices=['msvd-qa', 'msrvtt-qa', 'svqa'], type=str)
+    parser.add_argument('--dataset_root', default='./dataset', type=str)
     parser.add_argument('--question_type', default='none', choices=['none'], type=str)
     # output
     parser.add_argument('--out', dest='outfile',
                         help='output filepath', default="{}_{}_feat_24_{}clip.h5", type=str)
     # image sizes
-    parser.add_argument('--num_clips', default=10, type=int)
+    parser.add_argument('--num_clips', default=5, type=int)
     parser.add_argument('--image_height', default=224, type=int)
     parser.add_argument('--image_width', default=224, type=int)
 
     # network params
-    parser.add_argument('--model', default='resnet101', choices=['resnet101', 'resnext101'], type=str)
+    # parser.add_argument('--model', default='resnet101', choices=['resnet101', 'resnext101'], type=str)
     parser.add_argument('--seed', default='666', type=int, help='random seed')
     args = parser.parse_args()
-
-    if args.model == 'resnet101':
-        args.feature_type = 'appearance'
-    elif args.model == 'resnext101':
-        args.feature_type = 'motion'
-    else:
-        raise Exception('Feature type not supported!')
 
     torch.manual_seed(args.seed)
     np.random.seed(args.seed)
@@ -235,9 +169,12 @@ if __name__ == '__main__':
                     args.outfile.format(args.dataset, args.feature_type, str(args.num_clips)))
 
     if args.dataset == 'msvd-qa':
-        args.annotation_file = './data/MSVD-QA/{}_qa.json'
-        args.video_dir = './data/MSVD-QA/video/'
-        args.video_name_mapping = './data/MSVD-QA/youtube_mapping.txt'
+        # args.annotation_file = './dataset/msvd_qa/{}_qa.json'
+        dataset_path = os.path.join(args.dataset_root, args.dataset)
+        args.annotation_file = os.path.join(dataset_path, '{}_qa.json')
+        # args.video_dir = './dataset/msvd_qa/video/'
+        args.video_dir = os.path.join(dataset_path, 'video/')
+        # args.video_name_mapping = './data/MSVD-QA/youtube_mapping.txt'
         video_paths = msvd_qa.load_video_paths(args)
         random.shuffle(video_paths)
         # load model
