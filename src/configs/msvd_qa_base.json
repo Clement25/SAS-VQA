@@ -1,19 +1,24 @@
 {
   "train_datasets": [
     {
-      "name": "msrvtt",
-      "txt": "/txt/msrvtt_retrieval/train.jsonl",
+      "name": "msrvd_qa",
+      "txt": {
+        "msrvtt_qa": "/txt/msrvtt_qa/train.jsonl"
+      },
       "img": "/img/msrvtt"
     }
   ],
   "val_datasets": [
     {
-      "name": "msrvtt_retrieval",
-      "txt": "/txt/msrvtt_retrieval/val.jsonl",
+      "name": "msrvtt_qa",
+      "txt": {
+        "msrvtt_qa": "/txt/msrvtt_qa/val.jsonl"
+      },
       "img": "/img/msrvtt"
     }
   ],
-  "max_txt_len": 20,
+  "ans2label_path": "/txt/msrvtt_qa/train_ans2label.json",
+  "max_txt_len": 100,
   "max_img_size": 448,
   "img_pixel_mean": [123.675, 116.28, 103.53],
   "img_pixel_std": [1.0, 1.0, 1.0],
@@ -29,13 +34,13 @@
   "detectron2_weights_path": null,
   "bert_weights_path": null,
   "tokenizer_dir": "/pretrain/bert-base-uncased/",
-  "output_dir": "/storage/msrvtt_ret_default",
+  "output_dir": "/storage/msrvtt_qa_default",
   "train_batch_size": 16,
   "val_batch_size": 16,
   "gradient_accumulation_steps": 1,
-  "num_train_epochs": 20,
-  "min_valid_steps": 100,
-  "num_valid": 100,
+  "num_train_epochs": 10,
+  "min_valid_steps": 50,
+  "num_valid": 10,
   "learning_rate": 5e-5,
   "weight_decay": 1e-3,
   "decay": "linear",
@@ -48,6 +53,7 @@
   "cnn_lr_decay": "linear",
   "seed":42,
   "fp16": 1,
-  "loss_type": "ce",
-  "itm_neg_size": 1
+  "classifier": "mlp",
+  "cls_hidden_scale": 2,
+  "task": "msrvtt_qa"
 }
