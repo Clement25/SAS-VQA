@@ -9,7 +9,6 @@ from torch import nn
 import torchvision
 import random
 import numpy as np
-from models import resnext
 from datautils import utils
 from datautils import tgif_qa
 from datautils import msrvtt_qa
@@ -94,7 +93,6 @@ def generate_h5(processor, video_ids, num_clips, outfile):  # default-8
                                                   dtype=np.float32)
                     video_ids_dset = fd.create_dataset('video_id', shape=(dataset_size,), dtype=np.int)
             elif args.feature_type == 'motion':
-                import ipdb; ipdb.set_trace()
                 clip_torch = torch.FloatTensor(np.asarray(clips)).cuda()
                 if valid:
                     print('====' * 50)
@@ -169,12 +167,10 @@ if __name__ == '__main__':
                     args.outfile.format(args.dataset, args.feature_type, str(args.num_clips)))
 
     if args.dataset == 'msvd-qa':
-        # args.annotation_file = './dataset/msvd_qa/{}_qa.json'
         dataset_path = os.path.join(args.dataset_root, args.dataset)
-        args.annotation_file = os.path.join(dataset_path, '{}_qa.json')
+        args.annotation_file = os.path.join(dataset_path, 'annotations/qa_{}.json')
         # args.video_dir = './dataset/msvd_qa/video/'
-        args.video_dir = os.path.join(dataset_path, 'video/')
-        # args.video_name_mapping = './data/MSVD-QA/youtube_mapping.txt'
+        args.video_dir = os.path.join(dataset_path, 'YouTubeClips')
         video_paths = msvd_qa.load_video_paths(args)
         random.shuffle(video_paths)
         # load model
