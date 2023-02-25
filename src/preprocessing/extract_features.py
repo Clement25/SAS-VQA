@@ -17,7 +17,7 @@ from datautils import svqa
 from transformers import CLIPImageProcessor
 
 
-def extract_clips_with_consecutive_frames(path, num_clips, num_frames_per_clip=-1, intv=2):
+def extract_clips_with_consecutive_frames(processor, path, num_frames_per_video=-1, intv=2):
     """
     Args:
         path: path of a video
@@ -27,8 +27,6 @@ def extract_clips_with_consecutive_frames(path, num_clips, num_frames_per_clip=-
         A list of raw features of clips.
     """
     valid = True
-    clips = list()
-    print(path)
     try:
         cap = cv2.VideoCapture(path)
         video_data = []
@@ -39,17 +37,16 @@ def extract_clips_with_consecutive_frames(path, num_clips, num_frames_per_clip=-
                 frame = cv2.merge([r, g, b])
                 video_data.append(frame)
                 rval, frame = cap.read()
-                cv2.waitKey(1)
         cap.release()
     except:
         print('file {} error'.format(path))
         raise ValueError
         valid = False
-        return list(np.zeros(shape=(num_clips, num_frames_per_clip, 3, 224, 224))), valid
+        return list(np.zeros(shape=(num_frames_per_video, 3, 224, 224))), valid
     
     total_frames = len(video_data)
-    if num_frames_per_clip > 0: 
-        intv = total_frames // num_frames_per_clip
+    if num_frames_per_video > 0: 
+        intv = total_frames // num_frames_per_video
     frames = video_data[::intv]
     processed_frames = processor(frames, return_tensors="pt")
     return processed_frames, valid
@@ -73,43 +70,22 @@ def generate_h5(processor, video_ids, num_clips, outfile):  # default-8
         video_ids_dset = None
         i0 = 0
         _t = {'misc': utils.Timer()}
-        for i, (video_path, video_id) in enumerate(tqdm(video_ids)):
+        for i, video_path in enumerate(tqdm(video_ids)):
+            video_id = video_path.split('/')[-1].split('.')[0]
             _t['misc'].tic()
-            clips, valid = extract_clips_with_consecutive_frames(video_path, num_clips=num_clips, num_frames_per_clip=16)
-            if args.feature_type == 'appearance':
-                clip_feat = []
+            frames, valid = extract_clips_with_consecutive_frames(processor, video_path)
+            if args.feature_type == 'video':
+                frames_torch = torch.FloatTensor(np.asarray(frames['pixel_values'])).cuda()
                 if valid:
-                    for clip_id, clip in enumerate(clips):
-                        feats = processor(clip)
-                        feats = feats.squeeze()
-                        clip_feat.append(feats)
+                    frames_torch = frames_torch.squeeze()
                 else:
-                    clip_feat = np.zeros(shape=(num_clips, 16, 2048))
-                clip_feat = np.asarray(clip_feat)  # (num_clips, num_frame, 2048)
+                    frames_torch = np.zeros(shape=(num_clips, 2048))
                 if feat_dset is None:
-                    print(clip_feat.shape)
-                    C, F, D = clip_feat.shape
-                    feat_dset = fd.create_dataset('resnet_features', (dataset_size, C, F, D),
-                                                  dtype=np.float32)
-                    video_ids_dset = fd.create_dataset('video_id', shape=(dataset_size,), dtype=np.int)
-            elif args.feature_type == 'motion':
-                clip_torch = torch.FloatTensor(np.asarray(clips)).cuda()
-                if valid:
-                    print('====' * 50)
-                    # clip_feat = model(clip_torch)
-                    print('clip_feat:', clip_feat.shape)
-                    clip_feat = clip_feat.squeeze()
-                    clip_feat = clip_feat.detach().cpu().numpy()
-                else:
-                    clip_feat = np.zeros(shape=(num_clips, 2048))
-                if feat_dset is None:
-                    C, D = clip_feat.shape
-                    feat_dset = fd.create_dataset('resnext_features', (dataset_size, C, D),
-                                                  dtype=np.float32)
-                    video_ids_dset = fd.create_dataset('video_id', shape=(dataset_size,), dtype=np.int)
+                    feat_dset = fd['processed_feats'] = list(range(dataset_size))
+                    video_ids_dset = fd['video_id'] = list(range(dataset_size))
 
             i1 = i0 + 1
-            feat_dset[i0:i1] = clip_feat
+            feat_dset[i0:i1] = frames_torch
             video_ids_dset[i0:i1] = video_id
             i0 = i1
             _t['misc'].toc()
@@ -139,12 +115,14 @@ if __name__ == '__main__':
     # parser.add_argument('--model', default='resnet101', choices=['resnet101', 'resnext101'], type=str)
     parser.add_argument('--seed', default='666', type=int, help='random seed')
     args = parser.parse_args()
+    args.feature_type = 'video'
 
     torch.manual_seed(args.seed)
     np.random.seed(args.seed)
 
     # initialize clip processors
     processor = CLIPImageProcessor.from_pretrained("openai/clip-vit-base-patch32")
+    dataset_path = os.path.join(args.dataset_root, args.dataset)
 
     # annotation files
     if args.dataset == 'tgif-qa':
@@ -156,7 +134,6 @@ if __name__ == '__main__':
         generate_h5(processor, video_paths, args.num_clips,
                     args.outfile.format(args.dataset, args.feature_type, str(args.num_clips)))
 
-
     if args.dataset == 'msrvtt-qa':
         args.annotation_file = './data/MSRVTT-QA/{}_qa.json'
         args.video_dir = './data/MSRVTT-QA/video/'
@@ -167,15 +144,19 @@ if __name__ == '__main__':
                     args.outfile.format(args.dataset, args.feature_type, str(args.num_clips)))
 
     if args.dataset == 'msvd-qa':
-        dataset_path = os.path.join(args.dataset_root, args.dataset)
         args.annotation_file = os.path.join(dataset_path, 'annotations/qa_{}.json')
         # args.video_dir = './dataset/msvd_qa/video/'
         args.video_dir = os.path.join(dataset_path, 'YouTubeClips')
         video_paths = msvd_qa.load_video_paths(args)
         random.shuffle(video_paths)
+        
+        outpath = os.path.join(dataset_path, 'processed')
+        if not os.path.exists(outpath):
+            os.mkdir(outpath)
+        outfile = os.path.join(outpath, args.outfile.format(args.dataset, args.feature_type, str(args.num_clips)))
         # load model
         generate_h5(processor, video_paths, args.num_clips,
-                    args.outfile.format(args.dataset, args.feature_type, str(args.num_clips)))
+                    outfile)
 
     elif args.dataset == 'svqa':
         args.annotation_file = './data/SVQA/questions.json'
