@@ -58,16 +58,34 @@ def mk_tgif_qa_dataloader(task_type, anno_path, lmdb_dir, cfg, tokenizer,
                 "answer_type": "object"
                 }
             msrvtt_qa: {
-                "answer": "couch",
                 "question": "what are three people sitting on?",
+                "answer": "couch",
                 "video_id": "video6513",
                 "answer_type": "what"
                 }
+            msvd_qa{
+                "question": "what is chewing on a nut?",
+                "answer": "animal",
+                "video_id": "-4wsuPCjDBc_5_15.avi",
+                "answer_type": "what"
+            }
     """
     if task_type == 'msvd_qa':  # msvd-qa
         raw_datalist = json.load(open(anno_path, 'r'))
         LOGGER.info(f"Loaded data size {len(raw_datalist)}")
-        import ipdb; ipdb.set_trace()
+        datalist = []
+
+        for qid, raw_d in enumerate(raw_datalist):
+            d = dict(
+                question=raw_d["question"],
+                answer=raw_d["answer"],
+                video_id=raw_d["video"],
+                answert_type=raw_d["answer_type"],
+                question_id=qid
+            )
+            datalist.append(d)
+        LOGGER.info(f"datalist {len(datalist)}")
+        
     else:
         raw_datalist = load_jsonl(anno_path)
         LOGGER.info(f"Loaded data size {len(raw_datalist)}")
@@ -95,10 +113,11 @@ def mk_tgif_qa_dataloader(task_type, anno_path, lmdb_dir, cfg, tokenizer,
             datalist.append(d)
         LOGGER.info(f"datalist {len(datalist)}")
 
-        grouped = defaultdict(list)  # examples grouped by image/video id
-        for d in datalist:
-            grouped[d["vid_id"]].append(d)
-        LOGGER.info(f"grouped {len(grouped)}")
+    # examples grouped by image/video id
+    grouped = defaultdict(list)  
+    for d in datalist:
+        grouped[d["video_id"]].append(d)
+    LOGGER.info(f"grouped {len(grouped)}")
 
     # each group has a single image with multiple questions
     group_datalist = mk_input_group(
@@ -156,7 +175,7 @@ def setup_dataloaders(cfg, tokenizer):
         train_loader = mk_tgif_qa_dataloader(
             task_type=cfg.task,
             anno_path=cfg.train_datasets[0].txt,
-            lmdb_dir=None,
+            img_hdf5_dir=cfg.train_datasets[0].img,
             cfg=cfg, tokenizer=tokenizer, is_train=True
         )
         val_loader = mk_tgif_qa_dataloader(

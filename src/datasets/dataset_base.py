@@ -61,7 +61,6 @@ def get_video_decoding_kwargs(container, num_frames, target_fps,
         )
     return decoder_kwargs
 
-
 def load_decompress_img_from_lmdb_value(lmdb_value):
     """
     Args:
@@ -94,7 +93,7 @@ class BaseDataset(Dataset):
     num_frm: #frames to use as input.
     """
 
-    def __init__(self, datalist, tokenizer, img_lmdb_dir, fps=3, num_frm=3,
+    def __init__(self, datalist, tokenizer, img_hdf5_dir, fps=3, num_frm=3,
                  frm_sampling_strategy="rand", max_img_size=-1, max_txt_len=20):
         self.fps = fps
         self.num_frm = num_frm
@@ -102,16 +101,13 @@ class BaseDataset(Dataset):
         self.datalist = datalist
         self.tokenizer = tokenizer
         self.max_txt_len = max_txt_len
-        self.max_img_size = max_img_size
-        self.img_resize = ImageResize(
-            max_img_size,
-            "bilinear")  # longer side will be resized to 1000
-        self.img_pad = ImagePad(
-            max_img_size, max_img_size)  # pad to 1000 * 1000
-        self.env = lmdb.open(
-            img_lmdb_dir, readonly=True,
-            create=False)  # readahead=not _check_distributed()
-        self.txn = self.env.begin(buffers=True)
+        # self.max_img_size = max_img_size
+        # use hdf5 instead of lmdb
+        # self.env = lmdb.open(
+        #     img_lmdb_dir, readonly=True,
+        #     create=False)  # readahead=not _check_distributed()
+        # self.txn = self.env.begin(buffers=True)
+        self.hd5
 
     def __len__(self):
         return len(self.datalist)

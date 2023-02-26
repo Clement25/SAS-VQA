@@ -27,12 +27,12 @@ class VideoQADataset(BaseDataset):
     """
     open_ended_qa_names = ["frameqa", "msrvtt_qa", "msvd_qa"]
 
-    def __init__(self, task_type, datalist, tokenizer, img_lmdb_dir,
+    def __init__(self, task_type, datalist, tokenizer, img_hdf5_dir,
                  fps=3, num_frm=3, frm_sampling_strategy="rand",
                  max_img_size=1000, max_txt_len=20, ans2label=None,
                  ensemble_n_clips=1, return_label=True, is_train=True, random_sample_clips=True):
         super(VideoQADataset, self).__init__(
-            datalist, tokenizer, img_lmdb_dir,
+            datalist, tokenizer, img_hdf5_dir,
             fps=fps, num_frm=num_frm,
             frm_sampling_strategy=frm_sampling_strategy,
             max_img_size=max_img_size, max_txt_len=max_txt_len)

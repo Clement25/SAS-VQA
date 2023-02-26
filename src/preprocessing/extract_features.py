@@ -1,6 +1,6 @@
 import argparse, os
 os.environ['CUDA_VISIBLE_DEVICES'] = '0'
-import h5py
+import h5py, json
 import cv2
 from PIL import Image
 from tqdm import tqdm
@@ -51,7 +51,7 @@ def extract_clips_with_consecutive_frames(processor, path, num_frames_per_video=
     processed_frames = processor(frames, return_tensors="pt")
     return processed_frames, valid
 
-def generate_h5(processor, video_ids, num_clips, outfile):  # default-8
+def generate_h5(processor, video_ids, num_clips, h5_outfile, json_outfile):  # default-8
     """
     Args:
         model: loaded pretrained model for feature extraction
@@ -65,7 +65,9 @@ def generate_h5(processor, video_ids, num_clips, outfile):  # default-8
         os.makedirs('data/{}'.format(args.dataset))
 
     dataset_size = len(video_ids)  # paths
-    with h5py.File(outfile, 'w') as fd:
+    
+    mapping_dict = {}
+    with h5py.File(h5_outfile, 'w') as fd:
         feat_dset = None
         video_ids_dset = None
         i0 = 0
@@ -82,11 +84,10 @@ def generate_h5(processor, video_ids, num_clips, outfile):  # default-8
                     frames_torch = np.zeros(shape=(num_clips, 2048))
                 if feat_dset is None:
                     feat_dset = fd['processed_feats'] = list(range(dataset_size))
-                    video_ids_dset = fd['video_id'] = list(range(dataset_size))
 
             i1 = i0 + 1
             feat_dset[i0:i1] = frames_torch
-            video_ids_dset[i0:i1] = video_id
+            mapping_dict[video_id] = i0
             i0 = i1
             _t['misc'].toc()
             if (i % 1000 == 0):
@@ -94,18 +95,19 @@ def generate_h5(processor, video_ids, num_clips, outfile):  # default-8
                       .format(i1, dataset_size, _t['misc'].average_time,
                               _t['misc'].average_time * (dataset_size - i1) / 3600))
 
+        json.dump(mapping_dict, open(json_outfile, 'w'))
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--gpu_id', type=int, default=5, help='specify which gpu will be used')
     
     # dataset info-选定数据集
-    parser.add_argument('--dataset', default='msvd-qa', choices=['msvd-qa', 'msrvtt-qa', 'svqa'], type=str)
+    parser.add_argument('--dataset', default='msvd_qa', choices=['msvd_qa', 'msrvtt-qa', 'svqa'], type=str)
     parser.add_argument('--dataset_root', default='./dataset', type=str)
     parser.add_argument('--question_type', default='none', choices=['none'], type=str)
     # output
     parser.add_argument('--out', dest='outfile',
-                        help='output filepath', default="{}_{}_feat_24_{}clip.h5", type=str)
+                        help='output filepath', default="{}_{}_feat.h5", type=str)
     # image sizes
     parser.add_argument('--num_clips', default=5, type=int)
     parser.add_argument('--image_height', default=224, type=int)
@@ -143,7 +145,7 @@ if __name__ == '__main__':
         generate_h5(processor, video_paths, args.num_clips,
                     args.outfile.format(args.dataset, args.feature_type, str(args.num_clips)))
 
-    if args.dataset == 'msvd-qa':
+    if args.dataset == 'msvd_qa':
         args.annotation_file = os.path.join(dataset_path, 'annotations/qa_{}.json')
         # args.video_dir = './dataset/msvd_qa/video/'
         args.video_dir = os.path.join(dataset_path, 'YouTubeClips')
@@ -153,10 +155,11 @@ if __name__ == '__main__':
         outpath = os.path.join(dataset_path, 'processed')
         if not os.path.exists(outpath):
             os.mkdir(outpath)
-        outfile = os.path.join(outpath, args.outfile.format(args.dataset, args.feature_type, str(args.num_clips)))
+        h5_outfile = os.path.join(outpath, args.outfile.format(args.dataset, args.feature_type))
+        json_outfile = os.path.join(outpath, 'vidmapping.json')
         # load model
         generate_h5(processor, video_paths, args.num_clips,
-                    outfile)
+                    h5_outfile, json_outfile)
 
     elif args.dataset == 'svqa':
         args.annotation_file = './data/SVQA/questions.json'
