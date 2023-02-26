@@ -1,22 +1,17 @@
 {
   "train_datasets": [
     {
-      "name": "msrvd_qa",
-      "txt": {
-        "msrvtt_qa": "/txt/msrvtt_qa/train.jsonl"
-      },
-      "img": "/img/msrvtt"
+      "name": "msvd_qa",
+      "txt": "/data/henry/msvd-qa/annotations/qa_train.json"
     }
   ],
   "val_datasets": [
     {
-      "name": "msrvtt_qa",
-      "txt": {
-        "msrvtt_qa": "/txt/msrvtt_qa/val.jsonl"
-      },
-      "img": "/img/msrvtt"
+      "name": "msvd_qa",
+      "txt": "/data/henry/msvd-qa/annotations/qa_val.json"
     }
   ],
+  "clip_config": "openai/clip-vit-base-patch32",
   "ans2label_path": "/txt/msrvtt_qa/train_ans2label.json",
   "max_txt_len": 100,
   "max_img_size": 448,

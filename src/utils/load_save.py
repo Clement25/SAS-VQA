@@ -251,7 +251,6 @@ class E2E_TrainingRestorer(object):
                     opts.output_dir, 'log',
                     'restore_args.json'), 'w') as writer:
                 json.dump(vars(opts), writer, indent=4)
-            # assert opts == edict(restore_opts)
         # keep 2 checkpoints in case of corrupted
         self.save_path = f'{opts.output_dir}/restore.pt'
         self.backup_path = f'{opts.output_dir}/restore_backup.pt'

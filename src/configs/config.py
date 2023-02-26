@@ -330,7 +330,7 @@ class SharedConfigs(object):
     def get_video_qa_args(self):
         self.parser.add_argument(
             "--task", type=str,
-            choices=["action", "transition", "frameqa", "msrvtt_qa"],
+            choices=["action", "transition", "frameqa", "msvd_qa", "msrvtt_qa"],
             help="TGIF-QA tasks and MSRVTT-QA")
         self.parser.add_argument("--loss_type", type=str, default="ce",
                                  help="loss type, will be overwritten later")
@@ -363,6 +363,9 @@ class SharedConfigs(object):
             args.num_labels = max(num_answers, 1540)
             args.loss_type = "ce"
         elif args.task == "msrvtt_qa":
+            args.num_labels = max(num_answers, 1500)
+            args.loss_type = "ce"
+        elif args.task == "msvd_qa":
             args.num_labels = max(num_answers, 1500)
             args.loss_type = "ce"
         else:

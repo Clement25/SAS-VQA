@@ -75,7 +75,7 @@ def generate_h5(processor, video_ids, num_clips, outfile):  # default-8
             _t['misc'].tic()
             frames, valid = extract_clips_with_consecutive_frames(processor, video_path)
             if args.feature_type == 'video':
-                frames_torch = torch.FloatTensor(np.asarray(frames['pixel_values'])).cuda()
+                frames_torch = torch.FloatTensor(np.asarray(frames['pixel_values'])).cpu()
                 if valid:
                     frames_torch = frames_torch.squeeze()
                 else:

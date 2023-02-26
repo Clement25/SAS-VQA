@@ -1,16 +1,19 @@
 import torch
 import os
 import time
-import random
-import math
+import random, math
+import json
 from transformers import BertConfig, BertTokenizerFast
+from transformers import CLIPConfig, CLIPTokenizerFast
+
+import sys
+sys.path.append('..')
 from src.modeling.modeling import (
     ClipBertForSequenceClassification,
     ClipBertForMultipleChoice,
     ClipBertForRegression)
-from src.modeling.e2e_model import ClipBert
-
-from src.datasets.dataset_video_qa import ClipBertVideoQADataset, VideoQACollator
+# from modeling.e2e_model import ClipBert
+from src.datasets.dataset_video_qa import VideoQADataset, VideoQACollator
 from src.datasets.dataloader import InfiniteIterator, PrefetchLoader
 from src.datasets.data_utils import ImageNorm, mk_input_group
 from torch.utils.data import DataLoader
@@ -61,36 +64,41 @@ def mk_tgif_qa_dataloader(task_type, anno_path, lmdb_dir, cfg, tokenizer,
                 "answer_type": "what"
                 }
     """
-    raw_datalist = load_jsonl(anno_path)
-    LOGGER.info(f"Loaded data size {len(raw_datalist)}")
-    if cfg.data_ratio != 1.0:
-        random.shuffle(raw_datalist)
-        raw_datalist = raw_datalist[:int(len(raw_datalist) * cfg.data_ratio)]
-        LOGGER.info(f"Use {100 * cfg.data_ratio}% of the loaded data: {len(raw_datalist)}")
+    if task_type == 'msvd_qa':  # msvd-qa
+        raw_datalist = json.load(open(anno_path, 'r'))
+        LOGGER.info(f"Loaded data size {len(raw_datalist)}")
+        import ipdb; ipdb.set_trace()
+    else:
+        raw_datalist = load_jsonl(anno_path)
+        LOGGER.info(f"Loaded data size {len(raw_datalist)}")
+        if cfg.data_ratio != 1.0:
+            random.shuffle(raw_datalist)
+            raw_datalist = raw_datalist[:int(len(raw_datalist) * cfg.data_ratio)]
+            LOGGER.info(f"Use {100 * cfg.data_ratio}% of the loaded data: {len(raw_datalist)}")
 
-    datalist = []
-    qid = 0
-    for raw_d in raw_datalist:
-        d = dict(
-            question=raw_d["question"],
-            vid_id=raw_d["gif_name"] if "gif_name" in raw_d else raw_d["video_id"],
-            answer=raw_d["answer"],  # int or str
-            question_id=qid  # be careful, it is not unique across splits
-        )
-        qid += 1
+        datalist = []
+        qid = 0
+        for raw_d in raw_datalist:
+            d = dict(
+                question=raw_d["question"],
+                vid_id=raw_d["gif_name"] if "gif_name" in raw_d else raw_d["video_id"],
+                answer=raw_d["answer"],  # int or str
+                question_id=qid  # be careful, it is not unique across splits
+            )
+            qid += 1
 
-        if task_type in ["action", "transition"]:
-            d["options"] = raw_d["options"]
-        elif task_type in ["frameqa", "msrvtt_qa"]:
-            d["answer_type"] = raw_d["answer_type"]
+            if task_type in ["action", "transition"]:
+                d["options"] = raw_d["options"]
+            elif task_type in ["frameqa", "msrvtt_qa"]:
+                d["answer_type"] = raw_d["answer_type"]
 
-        datalist.append(d)
-    LOGGER.info(f"datalist {len(datalist)}")
+            datalist.append(d)
+        LOGGER.info(f"datalist {len(datalist)}")
 
-    grouped = defaultdict(list)  # examples grouped by image/video id
-    for d in datalist:
-        grouped[d["vid_id"]].append(d)
-    LOGGER.info(f"grouped {len(grouped)}")
+        grouped = defaultdict(list)  # examples grouped by image/video id
+        for d in datalist:
+            grouped[d["vid_id"]].append(d)
+        LOGGER.info(f"grouped {len(grouped)}")
 
     # each group has a single image with multiple questions
     group_datalist = mk_input_group(
@@ -105,7 +113,7 @@ def mk_tgif_qa_dataloader(task_type, anno_path, lmdb_dir, cfg, tokenizer,
     frm_sampling_strategy = cfg.frm_sampling_strategy
     if not is_train and frm_sampling_strategy == "rand":
         frm_sampling_strategy = "middle"
-    dataset = ClipBertVideoQADataset(
+    dataset = VideoQADataset(
         task_type=cfg.task,
         datalist=group_datalist,
         tokenizer=tokenizer,
@@ -144,21 +152,35 @@ def mk_tgif_qa_dataloader(task_type, anno_path, lmdb_dir, cfg, tokenizer,
 
 def setup_dataloaders(cfg, tokenizer):
     LOGGER.info("Init. train_loader and val_loader...")
-    train_loader = mk_tgif_qa_dataloader(
-        task_type=cfg.task,
-        anno_path=cfg.train_datasets[0].txt[cfg.task],
-        lmdb_dir=cfg.train_datasets[0].img,
-        cfg=cfg, tokenizer=tokenizer, is_train=True
-    )
-    val_loader = mk_tgif_qa_dataloader(
-        task_type=cfg.task,
-        anno_path=cfg.val_datasets[0].txt[cfg.task],
-        lmdb_dir=cfg.val_datasets[0].img,
-        cfg=cfg, tokenizer=tokenizer, is_train=False, return_label=False
-    )
-    img_norm = ImageNorm(mean=cfg.img_pixel_mean, std=cfg.img_pixel_std)
-    train_loader = PrefetchLoader(train_loader, img_norm)
-    val_loader = PrefetchLoader(val_loader, img_norm)
+    if cfg.task == 'msvd_qa':
+        train_loader = mk_tgif_qa_dataloader(
+            task_type=cfg.task,
+            anno_path=cfg.train_datasets[0].txt,
+            lmdb_dir=None,
+            cfg=cfg, tokenizer=tokenizer, is_train=True
+        )
+        val_loader = mk_tgif_qa_dataloader(
+            task_type=cfg.task,
+            anno_path=cfg.val_datasets[0].txt,
+            lmdb_dir=None,
+            cfg=cfg, tokenizer=tokenizer, is_train=False, return_label=False
+        )
+    else:
+        train_loader = mk_tgif_qa_dataloader(
+            task_type=cfg.task,
+            anno_path=cfg.train_datasets[0].txt[cfg.task],
+            lmdb_dir=cfg.train_datasets[0].img,
+            cfg=cfg, tokenizer=tokenizer, is_train=True
+        )
+        val_loader = mk_tgif_qa_dataloader(
+            task_type=cfg.task,
+            anno_path=cfg.val_datasets[0].txt[cfg.task],
+            lmdb_dir=cfg.val_datasets[0].img,
+            cfg=cfg, tokenizer=tokenizer, is_train=False, return_label=False
+        )
+        img_norm = ImageNorm(mean=cfg.img_pixel_mean, std=cfg.img_pixel_std)
+        train_loader = PrefetchLoader(train_loader, img_norm)
+        val_loader = PrefetchLoader(val_loader, img_norm)
     return train_loader, val_loader
 
 
@@ -374,6 +396,13 @@ def start_training(cfg):
     LOGGER.info("device: {} n_gpu: {}, rank: {}, "
                 "16-bits training: {}".format(
                     device, n_gpu, hvd.rank(), bool(cfg.fp16)))
+    
+    # prepare data
+    if cfg.task == 'msvd_qa':
+        tokenizer = CLIPTokenizerFast.from_pretrained(cfg.clip_config)
+    else:
+        tokenizer = BertTokenizerFast.from_pretrained(cfg.tokenizer_dir)
+    train_loader, val_loader = setup_dataloaders(cfg, tokenizer)
 
     model = setup_model(cfg, device=device)
     model.train()
@@ -393,10 +422,6 @@ def start_training(cfg):
         model, optimizer, enabled=cfg.fp16, opt_level='O2',
         keep_batchnorm_fp32=True)
 
-    # prepare data
-    tokenizer = BertTokenizerFast.from_pretrained(cfg.tokenizer_dir)
-    train_loader, val_loader = setup_dataloaders(cfg, tokenizer)
-
     # compute the number of steps and update cfg
     total_n_examples = len(train_loader.dataset) * cfg.max_n_example_per_group
     total_train_batch_size = int(
@@ -411,7 +436,7 @@ def start_training(cfg):
         1. * cfg.num_train_steps / cfg.valid_steps)) + 1
 
     # restore
-    restorer = TrainingRestorer(cfg, model, optimizer)
+    # restorer = TrainingRestorer(cfg, model, optimizer)
     global_step = restorer.global_step
     TB_LOGGER.global_step = global_step
     if hvd.rank() == 0:

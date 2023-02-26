@@ -5,10 +5,13 @@ import copy
 from torch.utils.data.dataloader import default_collate
 from src.utils.basic_utils import flat_list_of_lists
 from src.utils.load_save import LOGGER
-from src.datasets.dataset_base import ClipBertBaseDataset
+from src.datasets.dataset_base import BaseDataset
+# for debug
+from transformers import CLIPTokenizerFast
+from src.datasets.data_utils import mk_input_group
+from collections import defaultdict
 
-
-class ClipBertVideoQADataset(ClipBertBaseDataset):
+class VideoQADataset(BaseDataset):
     """ This should work for both train and test (where labels are not available).
     task_type: str, one of [action, frameqa, transition]
         where action and transition are multiple-choice QA,
@@ -28,7 +31,7 @@ class ClipBertVideoQADataset(ClipBertBaseDataset):
                  fps=3, num_frm=3, frm_sampling_strategy="rand",
                  max_img_size=1000, max_txt_len=20, ans2label=None,
                  ensemble_n_clips=1, return_label=True, is_train=True, random_sample_clips=True):
-        super(ClipBertVideoQADataset, self).__init__(
+        super(VideoQADataset, self).__init__(
             datalist, tokenizer, img_lmdb_dir,
             fps=fps, num_frm=num_frm,
             frm_sampling_strategy=frm_sampling_strategy,
