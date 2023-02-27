@@ -29,7 +29,7 @@ class VideoQADataset(BaseDataset):
 
     def __init__(self, task_type, datalist, tokenizer, img_hdf5_dir,
                  fps=3, num_frm=3, frm_sampling_strategy="rand",
-                 max_img_size=1000, max_txt_len=20, ans2label=None,
+                 max_img_size=1000, max_txt_len=20, ans2label=None, vid2id=None,
                  ensemble_n_clips=1, return_label=True, is_train=True, random_sample_clips=True):
         super(VideoQADataset, self).__init__(
             datalist, tokenizer, img_hdf5_dir,
@@ -42,6 +42,7 @@ class VideoQADataset(BaseDataset):
         self.task_type = task_type
         self.ans2label = ans2label
         self.num_labels = len(ans2label)
+        self.vid2id = vid2id
         self.random_sample_clips = random_sample_clips
         self.label2ans = {v: k for k, v in ans2label.items()}
         self.qid2data = {d["question_id"]: d for group in datalist for d in group[1]}
@@ -49,6 +50,10 @@ class VideoQADataset(BaseDataset):
     def __len__(self):
         return len(self.datalist)
 
+    def _load_all_video_frames(self, vid):
+        idx = self.vid2id[vid]
+        all_frames = self.dataset[idx]
+        
     def _load_video_multi_clips_uniform(self, vid_id):
         """take multiple clips at fixed position"""
         vid_frm_array_list = []

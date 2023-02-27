@@ -39,7 +39,7 @@ from src.utils.distributed import all_gather_list
 from collections import defaultdict
 
 
-def mk_tgif_qa_dataloader(task_type, anno_path, lmdb_dir, cfg, tokenizer,
+def mk_tgif_qa_dataloader(task_type, anno_path, img_hdf5_dir, cfg, tokenizer,
                           is_train=True, return_label=True):
     """
     Returns:
@@ -128,6 +128,7 @@ def mk_tgif_qa_dataloader(task_type, anno_path, lmdb_dir, cfg, tokenizer,
     LOGGER.info(f"group_datalist {len(group_datalist)}")
 
     ans2label = load_json(cfg.ans2label_path)
+    vidmapping = load_json(cfg.vid_mapping)
 
     frm_sampling_strategy = cfg.frm_sampling_strategy
     if not is_train and frm_sampling_strategy == "rand":
@@ -136,8 +137,9 @@ def mk_tgif_qa_dataloader(task_type, anno_path, lmdb_dir, cfg, tokenizer,
         task_type=cfg.task,
         datalist=group_datalist,
         tokenizer=tokenizer,
-        img_lmdb_dir=lmdb_dir,
+        img_hdf5_dir=img_hdf5_dir,
         ans2label=ans2label,
+        vid2id=vidmapping,
         max_img_size=cfg.max_img_size,
         max_txt_len=cfg.max_txt_len,
         fps=cfg.fps,
@@ -181,7 +183,7 @@ def setup_dataloaders(cfg, tokenizer):
         val_loader = mk_tgif_qa_dataloader(
             task_type=cfg.task,
             anno_path=cfg.val_datasets[0].txt,
-            lmdb_dir=None,
+            img_hdf5_dir=cfg.train_datasets[0].img,
             cfg=cfg, tokenizer=tokenizer, is_train=False, return_label=False
         )
     else:

@@ -14,10 +14,13 @@ from datautils import tgif_qa
 from datautils import msrvtt_qa
 from datautils import msvd_qa
 from datautils import svqa
-from transformers import CLIPImageProcessor
+from transformers import CLIPImageProcessor, CLIPVisionModel
+from prefetch_loader import *
+from queue import Queue, Empty, Full
+from threading import Thread
 
 
-def extract_clips_with_consecutive_frames(processor, path, num_frames_per_video=-1, intv=2):
+def extract_clips_with_consecutive_frames(path, processor, model, args):
     """
     Args:
         path: path of a video
@@ -41,17 +44,15 @@ def extract_clips_with_consecutive_frames(processor, path, num_frames_per_video=
     except:
         print('file {} error'.format(path))
         raise ValueError
-        valid = False
-        return list(np.zeros(shape=(num_frames_per_video, 3, 224, 224))), valid
     
+    chunk_size = getattr(args, 'trunk_size', 128)
+    intv = getattr(args, 'intv', 4)
     total_frames = len(video_data)
-    if num_frames_per_video > 0: 
-        intv = total_frames // num_frames_per_video
     frames = video_data[::intv]
     processed_frames = processor(frames, return_tensors="pt")
     return processed_frames, valid
 
-def generate_h5(processor, video_ids, num_clips, h5_outfile, json_outfile):  # default-8
+def generate_h5(processor, model, video_paths, args, h5_outfile, json_outfile):  # default-8
     """
     Args:
         model: loaded pretrained model for feature extraction
@@ -64,29 +65,36 @@ def generate_h5(processor, video_ids, num_clips, h5_outfile, json_outfile):  # d
     if not os.path.exists('data/{}'.format(args.dataset)):
         os.makedirs('data/{}'.format(args.dataset))
 
-    dataset_size = len(video_ids)  # paths
-    
+    dataset_size = len(video_paths)  # paths
     mapping_dict = {}
+    
+    # sampling hps and criterions
+    num_frames_default = getattr(args, 'nfrms', 32)
+    
     with h5py.File(h5_outfile, 'w') as fd:
         feat_dset = None
-        video_ids_dset = None
+        flens = None
         i0 = 0
         _t = {'misc': utils.Timer()}
-        for i, video_path in enumerate(tqdm(video_ids)):
+        for i, video_path in enumerate(tqdm(video_paths)):
             video_id = video_path.split('/')[-1].split('.')[0]
             _t['misc'].tic()
-            frames, valid = extract_clips_with_consecutive_frames(processor, video_path)
+            frames, valid = extract_clips_with_consecutive_frames(video_path, processor, model, args)
+            video_length = len(frames)
             if args.feature_type == 'video':
                 frames_torch = torch.FloatTensor(np.asarray(frames['pixel_values'])).cpu()
                 if valid:
                     frames_torch = frames_torch.squeeze()
                 else:
-                    frames_torch = np.zeros(shape=(num_clips, 2048))
+                    frames_torch = np.zeros(shape=(num_frames_default, 768)) # clip output hidden dimension is 768
                 if feat_dset is None:
-                    feat_dset = fd['processed_feats'] = list(range(dataset_size))
+                    c, h, w = frames_torch.shape[-3:]
+                    feat_dset = fd['processed_feats'] = np.zeros(shape=(len(video_paths), 128, c, h, w))
+                    flens = fd['frame_lengths'] = np.zeros(shape=(len(video_paths), 1))
 
             i1 = i0 + 1
-            feat_dset[i0:i1] = frames_torch
+            flens[i0] = video_length
+            feat_dset[i0][:video_length] = frames_torch
             mapping_dict[video_id] = i0
             i0 = i1
             _t['misc'].toc()
@@ -96,6 +104,46 @@ def generate_h5(processor, video_ids, num_clips, h5_outfile, json_outfile):  # d
                               _t['misc'].average_time * (dataset_size - i1) / 3600))
 
         json.dump(mapping_dict, open(json_outfile, 'w'))
+
+def generate_h5_parallel(processor, model, video_paths, args, h5_outfile, json_outfile):
+    if not os.path.exists('data/{}'.format(args.dataset)):
+        os.makedirs('data/{}'.format(args.dataset))
+        
+    # move model to cuda, set it to eval mode
+    model.cuda()
+    model.eval()
+    
+    # cpu video queue
+    memory_video_queue = Queue(maxsize=8)
+    # cuda processing queue
+    cuda_video_queue = Queue(maxsize=2)
+    
+    # video frame generator
+    frm_generator = InputGen(video_paths, processor, args.intv)
+    load_thread_killer = thread_killer()
+    load_thread_killer.set_tokill(False)
+    preprocess_workers = 1
+    
+    # launch 4 threads to do load && pre-process the input video frames
+    for _ in range(preprocess_workers):
+        t = Thread(target=threaded_batches_feeder, args=(load_thread_killer, memory_video_queue, frm_generator))
+        t.start()
+    
+    cuda_transfers_thread_killer = thread_killer()
+    cuda_transfers_thread_killer.set_tokill(False)
+
+    cudathread = Thread(target=threaded_cuda_batches, \
+                args=(cuda_transfers_thread_killer, cuda_video_queue, memory_video_queue))
+
+    cudathread.start()
+    # let queue get filled
+    time.sleep(8)
+
+    with h5py.File(h5_outfile, 'w') as fd:    
+        for _ in range(len(video_paths)):
+            # read video frames out of the queue
+            _, video_frms = cuda_video_queue.get(block=True)
+    
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
@@ -108,10 +156,10 @@ if __name__ == '__main__':
     # output
     parser.add_argument('--out', dest='outfile',
                         help='output filepath', default="{}_{}_feat.h5", type=str)
-    # image sizes
-    parser.add_argument('--num_clips', default=5, type=int)
-    parser.add_argument('--image_height', default=224, type=int)
-    parser.add_argument('--image_width', default=224, type=int)
+
+    # feature extraction hps
+    parser.add_argument('--chunk_size', type=int, default=128, help='chunk size for computing feature similarity')
+    parser.add_argument('--intv', type=int, default=4, help='sampling interval between video frames')
 
     # network params
     # parser.add_argument('--model', default='resnet101', choices=['resnet101', 'resnext101'], type=str)
@@ -124,6 +172,7 @@ if __name__ == '__main__':
 
     # initialize clip processors
     processor = CLIPImageProcessor.from_pretrained("openai/clip-vit-base-patch32")
+    vision_model = CLIPVisionModel.from_pretrained("openai/clip-vit-base-patch32")
     dataset_path = os.path.join(args.dataset_root, args.dataset)
 
     # annotation files
@@ -147,7 +196,6 @@ if __name__ == '__main__':
 
     if args.dataset == 'msvd_qa':
         args.annotation_file = os.path.join(dataset_path, 'annotations/qa_{}.json')
-        # args.video_dir = './dataset/msvd_qa/video/'
         args.video_dir = os.path.join(dataset_path, 'YouTubeClips')
         video_paths = msvd_qa.load_video_paths(args)
         random.shuffle(video_paths)
@@ -158,7 +206,7 @@ if __name__ == '__main__':
         h5_outfile = os.path.join(outpath, args.outfile.format(args.dataset, args.feature_type))
         json_outfile = os.path.join(outpath, 'vidmapping.json')
         # load model
-        generate_h5(processor, video_paths, args.num_clips,
+        generate_h5_parallel(processor, vision_model, video_paths, args,
                     h5_outfile, json_outfile)
 
     elif args.dataset == 'svqa':

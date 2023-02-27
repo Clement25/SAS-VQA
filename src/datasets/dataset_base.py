@@ -3,7 +3,7 @@ from PIL import Image
 import io
 import torch
 import numpy as np
-import lmdb
+import h5py
 from src.datasets import decoder
 from src.datasets.data_utils import (
     ImageResize, ImagePad, image_to_tensor)
@@ -101,13 +101,9 @@ class BaseDataset(Dataset):
         self.datalist = datalist
         self.tokenizer = tokenizer
         self.max_txt_len = max_txt_len
-        # self.max_img_size = max_img_size
+
         # use hdf5 instead of lmdb
-        # self.env = lmdb.open(
-        #     img_lmdb_dir, readonly=True,
-        #     create=False)  # readahead=not _check_distributed()
-        # self.txn = self.env.begin(buffers=True)
-        self.hd5
+        self.dataset = h5py.File(img_hdf5_dir)
 
     def __len__(self):
         return len(self.datalist)
@@ -183,6 +179,7 @@ class BaseDataset(Dataset):
         padded_frms = self.img_pad(resized_frms)
         return padded_frms, video_max_pts
 
+        
 
 def img_collate(imgs):
     """

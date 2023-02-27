@@ -2,17 +2,18 @@
   "train_datasets": [
     {
       "name": "msvd_qa",
-      "txt": "/data/henry/msvd-qa/annotations/qa_train.json",
-      "img": "/data/henry/msvd-qa/processed/msvd-qa_video_feat_24_5clip.h5"
+      "txt": "/data/henry/msvd_qa/annotations/qa_train.json",
+      "img": "/data/henry/msvd_qa/processed/msvd-qa_video_feat.h5"
     }
   ],
   "val_datasets": [
     {
       "name": "msvd_qa",
-      "txt": "/data/henry/msvd-qa/annotations/qa_val.json",
-      "img": "/data/henry/msvd-qa/processed/msvd-qa_video_feat_24_5clip.h5"
+      "txt": "/data/henry/msvd_qa/annotations/qa_val.json",
+      "img": "/data/henry/msvd_qa/processed/msvd-qa_video_feat.h5"
     }
   ],
+  "vid_mapping": "/data/henry/msvd_qa/processed/vidmapping.json",
   "clip_config": "openai/clip-vit-base-patch32",
   "ans2label_path": "/txt/msrvtt_qa/train_ans2label.json",
   "max_txt_len": 100,
