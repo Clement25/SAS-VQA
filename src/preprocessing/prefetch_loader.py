@@ -5,28 +5,23 @@ import random
 import torch
 from tqdm import tqdm
 
-class threadsafe_iter:
-    """Takes an iterator/generator and makes it thread-safe by
-    serializing call to the `next` method of given iterator/generator.
-    """
+class LockedIterator(object):
     def __init__(self, it):
-        self.it = it
         self.lock = threading.Lock()
+        self.it = iter(it)
 
     def __iter__(self):
         return self
 
-    def next(self):
+    def __next__(self):
         with self.lock:
-            return self.it.next()
+            return self.it.__next__()
 
 def get_path_i(paths_count):
     """Cyclic generator of paths indice
     """
-    current_path_id = 0
-    while True:
+    for current_path_id in range(paths_count):
         yield current_path_id
-        current_path_id = (current_path_id + 1) % paths_count
 
 class InputGen:
     def __init__(self, paths, processor, intv):
@@ -35,7 +30,8 @@ class InputGen:
         self.init_count = 0
         self.lock = threading.Lock() #mutex for input path
         self.yield_lock = threading.Lock() #mutex for generator yielding of batch
-        self.path_id_generator = threadsafe_iter(get_path_i(len(self.paths))) 
+        self.path_id_generator = LockedIterator(get_path_i(len(self.paths))) 
+        # self.path_id_generator = get_path_i(len(self.paths))
         self.processor = processor  # clip vision processor
         self.prced_frms = None
         self.intv = intv
@@ -52,33 +48,32 @@ class InputGen:
         return self.__iter__()
 
     def __iter__(self):
-        while True:
-            #Iterates through the input paths in a thread-safe manner
-            for path_id in tqdm(self.path_id_generator): 
-                video_file = self.paths[path_id]
-                video_data = []
-                try:
-                    frame_count = 0
-                    cap = cv2.VideoCapture(video_file)
-                    if cap.isOpened():
+        #Iterates through the input paths in a thread-safe manner
+        for path_id in tqdm(self.path_id_generator, total=len(self.paths)): 
+            video_file = self.paths[path_id]
+            video_data = []
+            try:
+                frame_count = 0
+                cap = cv2.VideoCapture(video_file)
+                if cap.isOpened():
+                    rval, frm = cap.read()
+                    while rval:
+                        b, g, r = cv2.split(frm)
+                        frm = cv2.merge([r, g, b])
+                        if frame_count % self.intv == 0:
+                            video_data.append(frm)
+                        frame_count += 1
                         rval, frm = cap.read()
-                        while rval:
-                            b, g, r = cv2.split(frm)
-                            frm = cv2.merge([r, g, b])
-                            if frame_count % self.intv == 0:
-                                video_data.append(frm)
-                            frame_count += 1
-                            rval, frm = cap.read()
-                    cap.release()
-                except:
-                    print('file {} error'.format(video_file))
-                    raise ValueError
-                
-                with self.yield_lock:
-                    # (N, 3, H, W)
-                    self.prced_frms = torch.stack(self.processor(self.video_data, return_tensors="pt"))
-                    yield self.prced_frms
-                    self.prced_frms = None
+                cap.release()
+            except:
+                print('file {} error'.format(video_file))
+                raise ValueError
+            
+            with self.yield_lock:
+                # (N, 3, H, W)
+                self.prced_frms = np.stack(self.processor(video_data)['pixel_values'])
+                yield torch.from_numpy(self.prced_frms)
+                self.prced_frms = None
 
     def __call__(self):
         return self.__iter__()
