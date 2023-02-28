@@ -156,6 +156,16 @@ def generate_h5_parallel(processor, model, video_paths, args, h5_outfile):
                 frms_to_store = exted_frms.reshape(args.K, -1).cpu()
                 sampled_frames_h5[i] = frms_to_store
     
+    load_thread_killer.set_tokill(True)
+    cuda_transfers_thread_killer.set_tokill(True)
+    for _ in range(preprocess_workers):
+        try:
+            # Enforcing thread to shut down
+            memory_video_queue.get(block=True, timeout=1)
+            cuda_video_queue.get(block=True, timeout=1)
+        except Empty:
+            pass
+    
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()

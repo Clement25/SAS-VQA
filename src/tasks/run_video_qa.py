@@ -255,7 +255,6 @@ def forward_step(model, batch, cfg):
     outputs = model(batch)  # dict
     return outputs
 
-
 @torch.no_grad()
 def validate(model, val_loader, cfg, train_global_step, eval_score=True):
     """use eval_score=False when doing inference on test sets where answers are not available"""

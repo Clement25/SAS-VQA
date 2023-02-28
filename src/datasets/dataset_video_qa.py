@@ -53,6 +53,7 @@ class VideoQADataset(BaseDataset):
     def _load_all_video_frames(self, vid):
         idx = self.vid2id[vid]
         all_frames = self.dataset[idx]
+        return 
         
     def _load_video_multi_clips_uniform(self, vid_id):
         """take multiple clips at fixed position"""
