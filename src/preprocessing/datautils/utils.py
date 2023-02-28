@@ -37,11 +37,19 @@ def sample_representative_frames(frames, model, args):
     all_feats = torch.cat(feat_chunks, dim=0) # (N, 768)
     all_sims = all_feats @ all_feats.transpose(0, 1)  # (N, N)       
 
-def sample_frames_uniform(frames, K=32):
+def sample_frames_uniform(frames, K=8):
     num_frames = len(frames)
     assert num_frames > K
-    intv = num_frames // K
-    return frames[::intv]
+    intv = num_frames / K
+    
+    cur_idx = int(intv // 2)
+    sampled_frames = []
+    for _ in range(K):
+        sampled_frames.append(frames[cur_idx])
+        cur_idx = int(cur_idx + intv)
+    
+    assert len(sampled_frames) == K
+    return torch.stack(sampled_frames)
 
 # --------------------------------------------------------
 # Fast R-CNN

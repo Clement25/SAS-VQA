@@ -143,6 +143,7 @@ def generate_h5_parallel(processor, model, video_paths, args, h5_outfile):
     with h5py.File(h5_outfile, 'w') as fd:    
         if args.sampling_strategy == 'uni':
             fd.create_dataset("sampled_frames", (len(video_paths), args.K, 3*224*224))
+            sampled_frames_h5 = fd["sampled_frames"]
         for i in range(len(video_paths)):
             # read video frames out of the queue
             _, video_frms = cuda_video_queue.get(block=True)
@@ -152,9 +153,8 @@ def generate_h5_parallel(processor, model, video_paths, args, h5_outfile):
                 exted_frms = sample_representative_frames(video_frms, model, args)
             elif args.sampling_strategy == 'uni':
                 exted_frms = sample_frames_uniform(video_frms, K=args.K)
-                frms_to_store = exted_frms.resize((args.K, -1)).cpu()
-                import ipdb; ipdb.set_trace()
-                fd[i] = frms_to_store
+                frms_to_store = exted_frms.reshape(args.K, -1).cpu()
+                sampled_frames_h5[i] = frms_to_store
     
 
 if __name__ == '__main__':
@@ -166,14 +166,13 @@ if __name__ == '__main__':
     parser.add_argument('--dataset_root', default='./dataset', type=str)
     parser.add_argument('--question_type', default='none', choices=['none'], type=str)
     # output
-    parser.add_argument('--out', dest='outfile',
-                        help='output filepath', default="{}_{}_feat.h5", type=str)
+    parser.add_argument('--out', dest='outfile', help='output filepath', default="{}_{}_feat.h5", type=str)
 
     # feature extraction hps
     parser.add_argument('--chunk_size', type=int, default=128, help='chunk size for computing feature similarity')
-    parser.add_argument('--intv', type=int, default=4, help='sampling interval between video frames')
+    parser.add_argument('--intv', type=int, default=1, help='sampling interval between video frames')
     parser.add_argument('--sampling_strategy', default='uni', choices=['uni', 'repr'], type=str)
-    parser.add_argument('--K', type=int, default=32, help='number of frames to be sampled (esp. uniform sampling)')
+    parser.add_argument('--K', type=int, default=16, help='number of frames to be sampled (esp. uniform sampling)')
 
     # network params
     parser.add_argument('--seed', default='666', type=int, help='random seed')
@@ -221,7 +220,9 @@ if __name__ == '__main__':
         
         dataset = msvd_qa
         # generate mapping dict
-        generate_vidid_json(video_paths, outpath)
+        if not os.path.exists(outpath):
+            generate_vidid_json(video_paths, outpath)
+        # generate h5 file
         generate_h5_parallel(processor, vision_model, video_paths, args,
                     h5_outfile)
 
