@@ -21,7 +21,6 @@ def load_video_paths(args):
         video_paths.append(os.path.join(args.video_dir, '{}'.format (video_id)))
     return video_paths
 
-
 def process_questions(args):
     ''' Encode question tokens'''
     print('Loading data')

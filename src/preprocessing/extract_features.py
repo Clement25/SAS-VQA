@@ -9,16 +9,22 @@ from torch import nn
 import torchvision
 import random
 import numpy as np
-from datautils import utils
-from datautils import tgif_qa
-from datautils import msrvtt_qa
+from datautils.utils import sample_representative_frames, sample_frames_uniform, Timer
+# from datautils import tgif_qa
+# from datautils import msrvtt_qa
 from datautils import msvd_qa
-from datautils import svqa
+# from datautils import svqa
 from transformers import CLIPImageProcessor, CLIPVisionModel
 from prefetch_loader import *
 from queue import Queue, Empty, Full
 from threading import Thread
 
+def generate_vidid_json(video_paths, json_outfile):
+    mapping_dict = {}
+    for i, video_path in enumerate(video_paths):
+        video_id = video_path.split('/')[-1].split('.')[0]
+        mapping_dict[video_id] = i
+    json.dump(mapping_dict, open(json_outfile, 'w'))
 
 def extract_clips_with_consecutive_frames(path, processor, model, args):
     """
@@ -52,7 +58,7 @@ def extract_clips_with_consecutive_frames(path, processor, model, args):
     processed_frames = processor(frames, return_tensors="pt")
     return processed_frames, valid
 
-def generate_h5(processor, model, video_paths, args, h5_outfile, json_outfile):  # default-8
+def generate_h5(processor, model, video_paths, args, h5_outfile):  # default-8
     """
     Args:
         model: loaded pretrained model for feature extraction
@@ -66,8 +72,6 @@ def generate_h5(processor, model, video_paths, args, h5_outfile, json_outfile): 
         os.makedirs('data/{}'.format(args.dataset))
 
     dataset_size = len(video_paths)  # paths
-    mapping_dict = {}
-    
     # sampling hps and criterions
     num_frames_default = getattr(args, 'nfrms', 32)
     
@@ -75,9 +79,8 @@ def generate_h5(processor, model, video_paths, args, h5_outfile, json_outfile): 
         feat_dset = None
         flens = None
         i0 = 0
-        _t = {'misc': utils.Timer()}
+        _t = {'misc': Timer()}
         for i, video_path in enumerate(tqdm(video_paths)):
-            video_id = video_path.split('/')[-1].split('.')[0]
             _t['misc'].tic()
             frames, valid = extract_clips_with_consecutive_frames(video_path, processor, model, args)
             video_length = len(frames)
@@ -95,7 +98,6 @@ def generate_h5(processor, model, video_paths, args, h5_outfile, json_outfile): 
             i1 = i0 + 1
             flens[i0] = video_length
             feat_dset[i0][:video_length] = frames_torch
-            mapping_dict[video_id] = i0
             i0 = i1
             _t['misc'].toc()
             if (i % 1000 == 0):
@@ -103,9 +105,9 @@ def generate_h5(processor, model, video_paths, args, h5_outfile, json_outfile): 
                       .format(i1, dataset_size, _t['misc'].average_time,
                               _t['misc'].average_time * (dataset_size - i1) / 3600))
 
-        json.dump(mapping_dict, open(json_outfile, 'w'))
 
-def generate_h5_parallel(processor, model, video_paths, args, h5_outfile, json_outfile):
+
+def generate_h5_parallel(processor, model, video_paths, args, h5_outfile):
     if not os.path.exists('data/{}'.format(args.dataset)):
         os.makedirs('data/{}'.format(args.dataset))
         
@@ -134,15 +136,25 @@ def generate_h5_parallel(processor, model, video_paths, args, h5_outfile, json_o
 
     cudathread = Thread(target=threaded_cuda_batches, \
                 args=(cuda_transfers_thread_killer, cuda_video_queue, memory_video_queue))
-
     cudathread.start()
     # let queue get filled
     time.sleep(8)
 
     with h5py.File(h5_outfile, 'w') as fd:    
-        for _ in range(len(video_paths)):
+        if args.sampling_strategy == 'uni':
+            fd.create_dataset("sampled_frames", (len(video_paths), args.K, 3*224*224))
+        for i in range(len(video_paths)):
             # read video frames out of the queue
             _, video_frms = cuda_video_queue.get(block=True)
+            
+            # extract special representative frames
+            if args.sampling_strategy == 'repr':
+                exted_frms = sample_representative_frames(video_frms, model, args)
+            elif args.sampling_strategy == 'uni':
+                exted_frms = sample_frames_uniform(video_frms, K=args.K)
+                frms_to_store = exted_frms.resize((args.K, -1)).cpu()
+                import ipdb; ipdb.set_trace()
+                fd[i] = frms_to_store
     
 
 if __name__ == '__main__':
@@ -160,9 +172,10 @@ if __name__ == '__main__':
     # feature extraction hps
     parser.add_argument('--chunk_size', type=int, default=128, help='chunk size for computing feature similarity')
     parser.add_argument('--intv', type=int, default=4, help='sampling interval between video frames')
+    parser.add_argument('--sampling_strategy', default='uni', choices=['uni', 'repr'], type=str)
+    parser.add_argument('--K', type=int, default=32, help='number of frames to be sampled (esp. uniform sampling)')
 
     # network params
-    # parser.add_argument('--model', default='resnet101', choices=['resnet101', 'resnext101'], type=str)
     parser.add_argument('--seed', default='666', type=int, help='random seed')
     args = parser.parse_args()
     args.feature_type = 'video'
@@ -205,9 +218,12 @@ if __name__ == '__main__':
             os.mkdir(outpath)
         h5_outfile = os.path.join(outpath, args.outfile.format(args.dataset, args.feature_type))
         json_outfile = os.path.join(outpath, 'vidmapping.json')
-        # load model
+        
+        dataset = msvd_qa
+        # generate mapping dict
+        generate_vidid_json(video_paths, outpath)
         generate_h5_parallel(processor, vision_model, video_paths, args,
-                    h5_outfile, json_outfile)
+                    h5_outfile)
 
     elif args.dataset == 'svqa':
         args.annotation_file = './data/SVQA/questions.json'
