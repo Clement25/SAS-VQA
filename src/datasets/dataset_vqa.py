@@ -135,14 +135,21 @@ class VQACollator(object):
         )
         text_input_ids = batch_enc.input_ids  # (B, L)
         text_input_mask = batch_enc.attention_mask  # (B, L)
+        txt_inputs = dict(
+            text_input_ids = text_input_ids,
+            text_input_mask = text_input_mask
+        )
+        vis_inputs = dict(
+            pixel_values = visual_inputs
+        )
+
         labels = default_collate(
             [d["labels"] for d in text_examples]) \
             if text_examples[0]["labels"] is not None else None  # (B, #ans)
         question_ids = [d["question_id"] for d in text_examples]
         return dict(
-            visual_inputs=visual_inputs,  # (B, #frm=1 or T, H, W, C)
-            text_input_ids=text_input_ids,
-            text_input_mask=text_input_mask,
+            vis_inputs=vis_inputs,  # (B, #frm=1 or T, H, W, C)
+            txt_inputs=txt_inputs,
             question_ids=question_ids,
             labels=labels,
             n_examples_list=n_examples_list  # used to create image feature copies.

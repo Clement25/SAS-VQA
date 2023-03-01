@@ -13,8 +13,18 @@
       "img": "/data/henry/msvd_qa/processed/msvd_qa_video_feat.h5"
     }
   ],
+  "model": 
+  {
+    "txt_output_size": 768,
+    "vis_output_size": 768,
+    "outlayer_size": 256,
+    "num_labels": 2422,
+    "hidden_dropout_prob": 0.1,
+    "clip_pretrained_model": "openai/clip-vit-base-patch32",
+    "freeze": false
+  }
+  ,
   "vid_mapping": "/data/henry/msvd_qa/processed/vidmapping.json",
-  "clip_config": "openai/clip-vit-base-patch32",
   "ans2label_path": "/txt/msrvtt_qa/train_ans2label.json",
   "max_txt_len": 100,
   "max_img_size": 448,

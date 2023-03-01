@@ -4,11 +4,12 @@ import time
 import random, math
 import json
 from transformers import BertConfig, BertTokenizerFast
-from transformers import CLIPConfig, CLIPTokenizerFast
+from transformers import CLIPTokenizerFast
 
 import sys
 sys.path.append('..')
 from src.modeling.clip_model import CLIPModelforFinetune
+from src.modeling.modeling import CLIPForSeqClassification
 from src.datasets.dataset_video_qa import VideoQADataset, VideoQACollator
 from src.datasets.dataloader import InfiniteIterator, PrefetchLoader
 from src.datasets.data_utils import ImageNorm, mk_input_group
@@ -200,38 +201,25 @@ def setup_dataloaders(cfg, tokenizer):
 def setup_model(cfg, device=None):
     LOGGER.info("Setup model...")
     # has to be a BertConfig instance
-    model_cfg = load_json(cfg.model_config)
-    model_cfg = BertConfig(**model_cfg)
     # add downstream model config
     add_attr_list = [
         "num_labels", "classifier", "cls_hidden_scale",
         "loss_type",
     ]
     for k in add_attr_list:
-        setattr(model_cfg, k, cfg[k])
+        setattr(cfg.model, k, cfg[k])
     if cfg.task in ["action", "transition"]:
-        transformer_model_cls = ClipBertForMultipleChoice
+        vlm_model_cls = ClipBertForMultipleChoice
     else:
-        transformer_model_cls = ClipBertForSequenceClassification
+        vlm_model_cls = CLIPForSeqClassification
 
     # we separate the CNN and the transformer in order to use different optimizer for each
     # transformer still has a CNN layer inside, used to down sample grid.
     LOGGER.info("setup e2e model")
-    model = CLIPModel(
-        model_cfg, input_format=cfg.img_input_format,
-        detectron2_model_cfg=cfg.detectron2_model_cfg,
-        transformer_cls=transformer_model_cls)
-    if cfg.e2e_weights_path:
-        LOGGER.info(f"Loading e2e weights from {cfg.e2e_weights_path}")
-        load_state_dict_with_mismatch(model, cfg.e2e_weights_path)
-    else:
-        LOGGER.info(f"Loading cnn weights from {cfg.detectron2_weights_path}")
-        LOGGER.info(f"Loading bert weights from {cfg.bert_weights_path}")
-        model.load_separate_ckpt(
-            cnn_weights_path=cfg.detectron2_weights_path,
-            bert_weights_path=cfg.bert_weights_path)
-    if cfg.freeze_cnn:
-        model.freeze_cnn_backbone()
+    model = CLIPModelforFinetune(
+        cfg.model, 
+        vlm_cls=vlm_model_cls
+    )
     model.to(device)
 
     LOGGER.info("Setup model done!")
@@ -411,7 +399,7 @@ def start_training(cfg):
     
     # prepare data
     if cfg.task == 'msvd_qa':
-        tokenizer = CLIPTokenizerFast.from_pretrained(cfg.clip_config)
+        tokenizer = CLIPTokenizerFast.from_pretrained(cfg.model.clip_pretrained_model)
     else:
         tokenizer = BertTokenizerFast.from_pretrained(cfg.tokenizer_dir)
     train_loader, val_loader = setup_dataloaders(cfg, tokenizer)
