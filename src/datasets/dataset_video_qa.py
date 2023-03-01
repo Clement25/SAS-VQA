@@ -168,22 +168,31 @@ class VideoQACollator(object):
             )  # (B * n_options, )
         else:
             text_str_list = [d["q_str"] for d in text_examples]  # (B, )
-        batch_enc = self.tokenizer(
-            text_str_list,
-            padding = True,
-            truncation = True
-        )
+            
+        batch_enc = self.tokenizer(text_str_list, padding = True, truncation = True,   
+                                   return_tensors='pt')
+
         text_input_ids = batch_enc.input_ids  # (B, L)
-        text_input_mask = batch_enc.attention_mask  # (B, L)
+        text_attention_mask = batch_enc.attention_mask  # (B, L)
+        
+        B, L, _ = visual_inputs.size()
+        visual_inputs = visual_inputs.reshape(B*L, 3, 224, 224)
+        
+        video_lengths = [L] * B
+        video_start_end = [0]
+        for l in video_lengths:
+            video_start_end.append(video_start_end[-1] + l)
 
         labels = default_collate([int(d["label"]) for d in text_examples]) \
             if text_examples[0]["label"] is not None else None  # (B, #ans)
         question_ids = [d["question_id"] for d in text_examples]
+        
         return dict(
-            visual_inputs=visual_inputs,  # (B, #frm, H, W, C)
+            visual_inputs=visual_inputs,  # (B * #frm, C, H, W)
             text_input_ids=text_input_ids,
-            text_input_mask=text_input_mask,
+            text_attention_mask=text_attention_mask,
             question_ids=question_ids,
+            video_start_end=video_start_end,
             labels=labels,
             n_examples_list=n_examples_list  # used to create image feature copies.
         )

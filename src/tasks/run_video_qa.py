@@ -180,21 +180,7 @@ def setup_dataloaders(cfg, tokenizer):
             cfg=cfg, tokenizer=tokenizer, is_train=False, return_label=False
         )
     else:
-        train_loader = mk_tgif_qa_dataloader(
-            task_type=cfg.task,
-            anno_path=cfg.train_datasets[0].txt[cfg.task],
-            lmdb_dir=cfg.train_datasets[0].img,
-            cfg=cfg, tokenizer=tokenizer, is_train=True
-        )
-        val_loader = mk_tgif_qa_dataloader(
-            task_type=cfg.task,
-            anno_path=cfg.val_datasets[0].txt[cfg.task],
-            lmdb_dir=cfg.val_datasets[0].img,
-            cfg=cfg, tokenizer=tokenizer, is_train=False, return_label=False
-        )
-        img_norm = ImageNorm(mean=cfg.img_pixel_mean, std=cfg.img_pixel_std)
-        train_loader = PrefetchLoader(train_loader, img_norm)
-        val_loader = PrefetchLoader(val_loader, img_norm)
+        raise ValueError
     return train_loader, val_loader
 
 
@@ -386,7 +372,6 @@ def validate(model, val_loader, cfg, train_global_step, eval_score=True):
 
 def start_training(cfg):
     set_random_seed(cfg.seed)
-
     n_gpu = hvd.size()
     cfg.n_gpu = n_gpu
     device = torch.device("cuda", hvd.local_rank())
@@ -410,8 +395,9 @@ def start_training(cfg):
 
     # Horovod: (optional) compression algorithm.compressin
     compression = hvd.Compression.none
+    named_parameters = [(n, p) for (n, p) in model.named_parameters() if p.requires_grad]
     optimizer = hvd.DistributedOptimizer(
-        optimizer, named_parameters=model.named_parameters(),
+        optimizer, named_parameters=named_parameters,
         compression=compression)
 
     #  Horovod: broadcast parameters & optimizer state.
@@ -436,16 +422,14 @@ def start_training(cfg):
         1. * cfg.num_train_steps / cfg.valid_steps)) + 1
 
     # restore
-    # restorer = TrainingRestorer(cfg, model, optimizer)
+    restorer = TrainingRestorer(cfg, model, optimizer)
     global_step = restorer.global_step
     TB_LOGGER.global_step = global_step
     if hvd.rank() == 0:
         LOGGER.info("Saving training meta...")
-        save_training_meta(cfg)
+        # save_training_meta(cfg)
         path = join(
             cfg.output_dir, 'log', "detectron2_model_cfg.yaml")
-        with open(path, "w") as f:
-            f.write(model.cnn.config_file)
         LOGGER.info("Saving training done...")
         TB_LOGGER.create(join(cfg.output_dir, 'log'))
         pbar = tqdm(total=cfg.num_train_steps)
@@ -481,50 +465,17 @@ def start_training(cfg):
     running_loss = RunningMeter('train_loss')
     for step, batch in enumerate(InfiniteIterator(train_loader)):
         # forward pass
-        bsz = len(batch["question_ids"])
         del batch["question_ids"]
-        mini_batch = dict()
+        
         for k, v in batch.items():
-            if k != "visual_inputs":
-                mini_batch[k] = v
-            if k == "labels":
-                mini_batch[k] = None
+            if torch.is_tensor(v):
+                batch[k] = v.cuda()
 
-        pool_method = cfg.score_agg_func
-        # could be 1, where only a single clip is used
-        num_clips = cfg.train_n_clips
-        num_frm = cfg.num_frm
-        # (B, T=num_clips*num_frm, C, H, W) --> (B, num_clips, num_frm, C, H, W)
-        new_visual_shape = (bsz, num_clips, num_frm) + batch["visual_inputs"].shape[2:]
-        visual_inputs = batch["visual_inputs"].view(*new_visual_shape)
         logits = []
-        for clip_idx in range(num_clips):
-            # (B, num_frm, C, H, W)
-            mini_batch["visual_inputs"] = visual_inputs[:, clip_idx]
-            mini_batch["n_examples_list"] = batch["n_examples_list"]
-            outputs = forward_step(model, mini_batch, cfg)
-            logits.append(outputs["logits"])
-            # the losses are cross entropy and mse, no need to * num_labels
-
-        logits = torch.stack(logits)  # (num_frm, B, 5)
-        if pool_method == "mean":
-            logits = logits.mean(0)  # (B, 5)
-        elif pool_method == "max":
-            logits = logits.max(0)[0]  # (B, 5)
-        elif pool_method == "lse":
-            logits = logits.permute(1, 0, 2).contiguous()  # (B, num_frm, 5), pooling will be done in CE
-        else:
-            raise ValueError(f"Invalid value for pool_method, "
-                             f"got {pool_method}, expect one of [`mean`, `max`, `lse`]")
-
-        if pool_method == "lse":
-            out = torch.logsumexp(logits.view(logits.shape[0], -1), dim=-1, keepdim=True) \
-                - torch.logsumexp(logits, dim=1)
-            loss = torch.gather(out, -1, batch["labels"].view(-1, 1))
-        else:
-            _, loss = model.transformer.calc_loss(logits, batch["labels"])
-        loss = loss.mean()
-
+        outputs = forward_step(model, batch, cfg)
+        
+        logits.append(outputs["logits"])
+        loss = outputs["loss"].mean()
         running_loss(loss.item())
         # backward pass
         delay_unscale = (step + 1) % cfg.gradient_accumulation_steps != 0

@@ -15,18 +15,19 @@ class CLIPModelforFinetune(nn.Module):
         
     def forward(self, batch):
         # used to make visual feature copies
+        visual_features = batch['visual_inputs']
         repeat_counts = batch["n_examples_list"]
-        del batch["n_examples_list"]
-        visual_features = self.cnn(batch["visual_inputs"])
-        batch["visual_inputs"] = repeat_tensor_rows(
-            visual_features, repeat_counts)
-        if self.retrieval:
-            batch["sample_size"] = len(repeat_counts)  # batch size
+
+        vis_inputs = {'pixel_values': repeat_tensor_rows(visual_features, repeat_counts)}
+        
+        txt_inputs = {'input_ids': batch['text_input_ids'], \
+                        'attention_mask': batch['text_attention_mask']}
         
         # obtain outputs
         logits = self.VLModel(
-                                txt_inputs=batch['txt_inputs'],
-                                vis_inputs=batch['vis_inputs']
+                                txt_inputs=txt_inputs,
+                                vis_inputs=vis_inputs,
+                                video_start_end=batch['video_start_end']
                             )
         
         logits, loss = self.calc_loss(logits, batch['labels'])
@@ -35,13 +36,6 @@ class CLIPModelforFinetune(nn.Module):
     def load_separate_ckpt(self, cnn_weights_path=None, bert_weights_path=None):
         if cnn_weights_path:
             self.cnn.load_state_dict(cnn_weights_path)
-
-        if bert_weights_path:
-            load_state_dict_with_mismatch(self.transformer, bert_weights_path)
-
-    def freeze_cnn_backbone(self):
-        for n, p in self.cnn.feature.named_parameters():
-            p.requires_grad = False
 
     def calc_loss(self, logits, labels):
         if labels is not None:

@@ -178,13 +178,12 @@ class CLIPBaseModel(nn.Module):
     def forward(self, txt_inputs, vis_inputs):
         r"""Modified from BertModel
         text_input_ids: (B, Lt)
-        visual_inputs: (B, #frame, H, W, C)
+        visual_inputs: (B * #frame, C, H, W)
         attention_mask: (B, Lt)  with 1 indicates valid, 0 indicates invalid position.
         """
         txt_out = self.txt_model(**txt_inputs)
         vis_out = self.vis_modal(**vis_inputs) 
         return dict(txt_out=txt_out, vis_out=vis_out)
-
 
 def instance_bce_with_logits(logits, labels, reduction="mean"):
     assert logits.dim() == 2
@@ -224,15 +223,22 @@ class CLIPForSeqClassification(nn.Module):
             nn.Linear(config.outlayer_size, config.num_labels)
         )
 
-    def forward(self, txt_inputs, vis_inputs):
+    def forward(self, txt_inputs, vis_inputs, video_start_end):
         outputs = self.clip(
             txt_inputs=txt_inputs,
-            vis_inputs=vis_inputs
+            vis_inputs=vis_inputs,
         )
         txt_output, vis_output = outputs['txt_out'], outputs['vis_out']
-        txt_pooled_output = txt_output.pooler_output
-        vis_pooled_output = vis_output.pooler_output
-        all_pooled_output = torch.cat([txt_pooled_output, vis_pooled_output], dim=-1)
+        vis_pooled_output = vis_output.pooler_output    # (B, E)
+        txt_pooled_output = txt_output.pooler_output    # (\sum L_i, E)
+
+        # for unequal numbers of video frames
+        sample_vis_outputs = []
+        for s, e in zip(video_start_end[:-1],video_start_end[1:]):
+            sample_vis_outputs.append(vis_pooled_output[s:e].mean(dim=0, keepdim=True))  # List of (1, E) 
+        sample_vis_outputs = torch.cat(sample_vis_outputs, dim=0)   # (B, E)
+        
+        all_pooled_output = torch.cat([txt_pooled_output, sample_vis_outputs], dim=-1)
 
         pooled_output = self.dropout(all_pooled_output)
         logits = self.classifier(pooled_output)
