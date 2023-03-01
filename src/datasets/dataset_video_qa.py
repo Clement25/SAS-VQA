@@ -25,7 +25,6 @@ class VideoQADataset(BaseDataset):
     return_label: bool, whether return label in __getitem__
     random_sample_clips:
     """
-    open_ended_qa_names = ["frameqa", "msrvtt_qa", "msvd_qa"]
 
     def __init__(self, task_type, datalist, tokenizer, img_hdf5_dir,
                  fps=3, num_frm=3, max_img_size=1000, max_txt_len=20, ans2label=None, vid2id=None,
@@ -34,6 +33,7 @@ class VideoQADataset(BaseDataset):
             datalist, tokenizer, img_hdf5_dir,
             fps=fps, num_frm=num_frm,
             max_img_size=max_img_size, max_txt_len=max_txt_len)
+        self.open_ended_qa_names = ["frameqa", "msrvtt_qa", "msvd_qa"]
         self.ensemble_n_clips = ensemble_n_clips
         self.return_label = return_label
         self.is_train = is_train
@@ -110,6 +110,7 @@ class VideoQADataset(BaseDataset):
         answer_type2idx = dict(
             frameqa={"object": 0, "number": 1, "color": 2, "location": 3},
             msrvtt_qa={k: idx for idx, k in enumerate(["what", "who", "how", "where", "when"])},
+            msvd_qa={k: idx for idx, k in enumerate(["what", "who", "how", "where", "when"])},
         )
 
         qid2pred_ans = {r["question_id"]: r["answer"] for r in results}
@@ -118,7 +119,6 @@ class VideoQADataset(BaseDataset):
 
         for qid, pred_ans in qid2pred_ans.items():
             preds.append(pred_ans)
-
             gt_data = self.qid2data[qid]
             gt_ans = gt_data["answer"]
             if self.task_type in self.open_ended_qa_names:

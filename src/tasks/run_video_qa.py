@@ -77,7 +77,7 @@ def mk_tgif_qa_dataloader(task_type, anno_path, img_hdf5_dir, cfg, tokenizer,
                 question=raw_d["question"],
                 answer=raw_d["answer"],
                 video_id=raw_d["video"].split('.')[0], # <id>.avi -> ['<id>', 'avi]
-                answert_type=raw_d["answer_type"],
+                answer_type=raw_d["answer_type"],
                 question_id=qid
             )
             datalist.append(d)
@@ -218,6 +218,11 @@ def forward_step(model, batch, cfg):
         repeat_counts = [e * cfg.num_labels for e in batch["n_examples_list"]]
         batch["n_examples_list"] = repeat_counts
 
+    # move to gpu
+    for k, v in batch.items():
+        if torch.is_tensor(v):
+            batch[k] = v.cuda()
+
     outputs = model(batch)  # dict
     return outputs
 
@@ -248,43 +253,26 @@ def validate(model, val_loader, cfg, train_global_step, eval_score=True):
         # multi-frame test, scores across frames of the same video will be pooled together
         pool_method = cfg.score_agg_func
         # could be 1, where only a single clip is evaluated
-        num_clips = cfg.inference_n_clips
         num_frm = cfg.num_frm
-        # (B, T=num_clips*num_frm, C, H, W) --> (B, num_clips, num_frm, C, H, W)
-        new_visual_shape = (bsz, num_clips, num_frm) + batch["visual_inputs"].shape[2:]
-        visual_inputs = batch["visual_inputs"].view(*new_visual_shape)
-        logits = []
+        
+        # (B * max(num_frm), C, H, W)
         losses = []
-        for clip_idx in range(num_clips):
-            # (B, num_frm, C, H, W)
-            mini_batch["visual_inputs"] = visual_inputs[:, clip_idx]
-            mini_batch["n_examples_list"] = batch["n_examples_list"]
-            outputs = forward_step(model, mini_batch, cfg)
-            logits.append(outputs["logits"].cpu())
-            _loss = outputs["loss"].sum().item() if isinstance(
-                outputs["loss"], torch.Tensor) else 0
-            losses.append(_loss)
-        loss += (sum(losses) / num_clips)
 
-        logits = torch.stack(logits)  # (num_frm, B, 5)
-        if pool_method == "mean":
-            logits = logits.mean(0)  # (B, 5)
-        elif pool_method == "max":
-            logits = logits.max(0)[0]  # (B, 5)
-        elif pool_method == "lse":
-            logits = logits.permute(1, 0, 2).contiguous()  # (B, num_frm, 5), pooling will be done in CE
-            logits = torch.logsumexp(logits, dim=1)  # torch.exp alone might be too large and unstable
-        else:
-            raise ValueError(f"Invalid value for pool_method, "
-                             f"got {pool_method}, expect one of [`mean`, `max`, `lse`]")
+        # (B * num_frm, C, H, W)
+        outputs = forward_step(model, batch, cfg)
+        logits = outputs["logits"].cpu()
+        _loss = outputs["loss"].sum().item() if isinstance(
+            outputs["loss"], torch.Tensor) else 0
+        losses.append(_loss)
 
-        if cfg.task in ["action", "transition", "frameqa", "msrvtt_qa"]:
+        if cfg.task in ["action", "transition", "frameqa", "msvd_qa", "msrvtt_qa"]:
             # cross entropy
             pred_labels = logits.max(dim=-1)[1].data.tolist()
         else:
             # mse
             preds = (logits + 0.5).long().clamp(min=1, max=10)
             pred_labels = preds.data.squeeze().tolist()
+            
         for qid, pred_label in zip(question_ids, pred_labels):
             qa_results.append(dict(
                 question_id=qid,
@@ -466,11 +454,6 @@ def start_training(cfg):
     for step, batch in enumerate(InfiniteIterator(train_loader)):
         # forward pass
         del batch["question_ids"]
-        
-        for k, v in batch.items():
-            if torch.is_tensor(v):
-                batch[k] = v.cuda()
-
         logits = []
         outputs = forward_step(model, batch, cfg)
         
