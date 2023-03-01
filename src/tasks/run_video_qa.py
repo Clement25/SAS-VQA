@@ -8,11 +8,7 @@ from transformers import CLIPConfig, CLIPTokenizerFast
 
 import sys
 sys.path.append('..')
-from src.modeling.modeling import (
-    ClipBertForSequenceClassification,
-    ClipBertForMultipleChoice,
-    ClipBertForRegression)
-# from modeling.e2e_model import ClipBert
+from src.modeling.clip_model import CLIPModelforFinetune
 from src.datasets.dataset_video_qa import VideoQADataset, VideoQACollator
 from src.datasets.dataloader import InfiniteIterator, PrefetchLoader
 from src.datasets.data_utils import ImageNorm, mk_input_group
@@ -74,12 +70,12 @@ def mk_tgif_qa_dataloader(task_type, anno_path, img_hdf5_dir, cfg, tokenizer,
         raw_datalist = json.load(open(anno_path, 'r'))
         LOGGER.info(f"Loaded data size {len(raw_datalist)}")
         datalist = []
-
+        
         for qid, raw_d in enumerate(raw_datalist):
             d = dict(
                 question=raw_d["question"],
                 answer=raw_d["answer"],
-                video_id=raw_d["video"],
+                video_id=raw_d["video"].split('.')[0], # <id>.avi -> ['<id>', 'avi]
                 answert_type=raw_d["answer_type"],
                 question_id=qid
             )
@@ -130,9 +126,6 @@ def mk_tgif_qa_dataloader(task_type, anno_path, img_hdf5_dir, cfg, tokenizer,
     ans2label = load_json(cfg.ans2label_path)
     vidmapping = load_json(cfg.vid_mapping)
 
-    frm_sampling_strategy = cfg.frm_sampling_strategy
-    if not is_train and frm_sampling_strategy == "rand":
-        frm_sampling_strategy = "middle"
     dataset = VideoQADataset(
         task_type=cfg.task,
         datalist=group_datalist,
@@ -144,7 +137,6 @@ def mk_tgif_qa_dataloader(task_type, anno_path, img_hdf5_dir, cfg, tokenizer,
         max_txt_len=cfg.max_txt_len,
         fps=cfg.fps,
         num_frm=cfg.num_frm,
-        frm_sampling_strategy=frm_sampling_strategy,
         ensemble_n_clips=cfg.train_n_clips if is_train else cfg.inference_n_clips,
         return_label=return_label,
         is_train=is_train
@@ -225,7 +217,7 @@ def setup_model(cfg, device=None):
     # we separate the CNN and the transformer in order to use different optimizer for each
     # transformer still has a CNN layer inside, used to down sample grid.
     LOGGER.info("setup e2e model")
-    model = ClipBert(
+    model = CLIPModel(
         model_cfg, input_format=cfg.img_input_format,
         detectron2_model_cfg=cfg.detectron2_model_cfg,
         transformer_cls=transformer_model_cls)

@@ -252,7 +252,6 @@ def decode(
                 safeguard_duration=safeguard_duration,
                 video_max_pts=video_max_pts
             )
-            import ipdb; ipdb.set_trace()
         else:
             raise NotImplementedError(
                 "Unknown decoding backend {}".format(backend)

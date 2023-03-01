@@ -3,14 +3,14 @@
     {
       "name": "msvd_qa",
       "txt": "/data/henry/msvd_qa/annotations/qa_train.json",
-      "img": "/data/henry/msvd_qa/processed/msvd-qa_video_feat.h5"
+      "img": "/data/henry/msvd_qa/processed/msvd_qa_video_feat.h5"
     }
   ],
   "val_datasets": [
     {
       "name": "msvd_qa",
       "txt": "/data/henry/msvd_qa/annotations/qa_val.json",
-      "img": "/data/henry/msvd_qa/processed/msvd-qa_video_feat.h5"
+      "img": "/data/henry/msvd_qa/processed/msvd_qa_video_feat.h5"
     }
   ],
   "vid_mapping": "/data/henry/msvd_qa/processed/vidmapping.json",

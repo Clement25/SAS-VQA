@@ -103,7 +103,7 @@ class BaseDataset(Dataset):
         self.max_txt_len = max_txt_len
 
         # use hdf5 instead of lmdb
-        self.dataset = h5py.File(img_hdf5_dir)
+        self.dataset = h5py.File(img_hdf5_dir, 'r')['sampled_frames']
 
     def __len__(self):
         return len(self.datalist)
@@ -137,47 +137,6 @@ class BaseDataset(Dataset):
         """
         h, w = tensor.shape[-2:]
         return h / float(w) > max_ratio or h / float(w) < 1 / max_ratio
-
-    def _load_video(self, video_id, num_clips=None, clip_idx=None,
-                    safeguard_duration=False, video_max_pts=None):
-        """Load and sample frames from video.
-        Apply transformation to the sampled frames.
-
-        Sample a clip:
-            - random: set num_clips and clip_idx to be None
-            - uniform: set num_clips=N, clip_idx=idx. e.g., num_clips=3
-                and clip_idx=1 will first segment the video into 3 clips,
-                then sample the 2nd clip.
-
-        Returns:
-            torch.float, in [0, 255], (n_frm=T, c, h, w)
-        """
-        assert (num_clips is None) == (clip_idx is None), "Both None, or both not None"
-        # (T, C, H, W) [0, 255]
-        io_stream = io.BytesIO(self.txn.get(str(video_id).encode("utf-8")))
-        raw_sampled_frms, video_max_pts = extract_frames_from_video_binary(
-            io_stream,
-            target_fps=self.fps,
-            num_frames=self.num_frm,
-            multi_thread_decode=False,
-            sampling_strategy=self.frm_sampling_strategy,
-            num_clips=num_clips,
-            clip_idx=clip_idx,
-            safeguard_duration=safeguard_duration,
-            video_max_pts=video_max_pts
-        )
-
-        if raw_sampled_frms is None:
-            return None, None
-        elif self._is_extreme_aspect_ratio(raw_sampled_frms, max_ratio=5.):
-            print(
-                f"Found extreme aspect ratio for video id {video_id}. Skip it")
-            return None, None
-
-        raw_sampled_frms = raw_sampled_frms.float()
-        resized_frms = self.img_resize(raw_sampled_frms)
-        padded_frms = self.img_pad(resized_frms)
-        return padded_frms, video_max_pts
 
         
 

@@ -28,13 +28,11 @@ class VideoQADataset(BaseDataset):
     open_ended_qa_names = ["frameqa", "msrvtt_qa", "msvd_qa"]
 
     def __init__(self, task_type, datalist, tokenizer, img_hdf5_dir,
-                 fps=3, num_frm=3, frm_sampling_strategy="rand",
-                 max_img_size=1000, max_txt_len=20, ans2label=None, vid2id=None,
+                 fps=3, num_frm=3, max_img_size=1000, max_txt_len=20, ans2label=None, vid2id=None,
                  ensemble_n_clips=1, return_label=True, is_train=True, random_sample_clips=True):
         super(VideoQADataset, self).__init__(
             datalist, tokenizer, img_hdf5_dir,
             fps=fps, num_frm=num_frm,
-            frm_sampling_strategy=frm_sampling_strategy,
             max_img_size=max_img_size, max_txt_len=max_txt_len)
         self.ensemble_n_clips = ensemble_n_clips
         self.return_label = return_label
@@ -50,65 +48,21 @@ class VideoQADataset(BaseDataset):
     def __len__(self):
         return len(self.datalist)
 
-    def _load_all_video_frames(self, vid):
+    def _load_video_frames(self, vid):
         idx = self.vid2id[vid]
         all_frames = self.dataset[idx]
-        return 
-        
-    def _load_video_multi_clips_uniform(self, vid_id):
-        """take multiple clips at fixed position"""
-        vid_frm_array_list = []
-        prev_clip = None
-        video_max_pts = None
-        for clip_idx in range(self.ensemble_n_clips):
-            curr_clip, video_max_pts = self._load_video(
-                vid_id, num_clips=self.ensemble_n_clips,
-                clip_idx=clip_idx, safeguard_duration=True,
-                video_max_pts=video_max_pts)
-            if curr_clip is None:
-                print("Copying prev clips as the current one is None")
-                curr_clip = copy.deepcopy(prev_clip)
-            else:
-                prev_clip = curr_clip
-            vid_frm_array_list.append(curr_clip)
-        return torch.cat(vid_frm_array_list, dim=0)
-
-    def _load_video_multi_clips_random(self, vid_id):
-        """take multiple clips at random position"""
-        vid_frm_array_list = []
-        prev_clip = None
-        for clip_idx in range(self.ensemble_n_clips):
-            curr_clip, _ = self._load_video(
-                vid_id, num_clips=None, clip_idx=None,
-                safeguard_duration=False)
-            if curr_clip is None:
-                print("Copying prev clips as the current one is None")
-                curr_clip = copy.deepcopy(prev_clip)
-            else:
-                prev_clip = curr_clip
-            vid_frm_array_list.append(curr_clip)
-        return None if any([e is None for e in vid_frm_array_list]) else torch.cat(vid_frm_array_list, dim=0)
+        return all_frames
 
     def __getitem__(self, index):
         # skip error videos:
         num_retries = 3
         for _ in range(num_retries):
-            vid_id, examples = self.datalist[index]  # one video with multiple examples
-            if self.ensemble_n_clips > 1:
-                # tensor (T*ensemble_n_clips, C, H, W), reshape as (T, ensemble_n_clips, C, H, W)
-                if self.is_train and self.random_sample_clips:
-                    vid_frm_array = self._load_video_multi_clips_random(vid_id)
-                else:
-                    vid_frm_array = self._load_video_multi_clips_uniform(vid_id)
-            else:
-                if self.is_train and self.random_sample_clips:
-                    vid_frm_array, _ = self._load_video(vid_id)  # tensor (T, C, H, W)
-                else:
-                    vid_frm_array, _ = self._load_video(vid_id, num_clips=1, clip_idx=0)  # tensor (T, C, H, W)
+            vid, examples = self.datalist[index]  # one video with multiple examples
+            vid_frm_array = self._load_video_frames(vid)
             # vid_frm_array = torch.zeros_like(vid_frm_array)
             # Select a random video if the current video was not able to access.
             if vid_frm_array is None:
-                LOGGER.info(f"Failed to load examples with video: {vid_id}. "
+                LOGGER.info(f"Failed to load examples with video: {vid}. "
                             f"Will randomly sample an example as a replacement.")
                 index = random.randint(0, len(self) - 1)
                 continue
@@ -214,11 +168,10 @@ class VideoQACollator(object):
             )  # (B * n_options, )
         else:
             text_str_list = [d["q_str"] for d in text_examples]  # (B, )
-        batch_enc = self.tokenizer.batch_encode_plus(
+        batch_enc = self.tokenizer(
             text_str_list,
-            max_length=self.max_length,
-            pad_to_max_length=True,
-            return_tensors="pt"
+            padding = True,
+            truncation = True
         )
         text_input_ids = batch_enc.input_ids  # (B, L)
         text_input_mask = batch_enc.attention_mask  # (B, L)
