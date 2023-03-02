@@ -238,7 +238,7 @@ class CLIPForSeqClassification(nn.Module):
             sample_vis_outputs.append(vis_pooled_output[s:e].mean(dim=0, keepdim=True))  # List of (1, E) 
         sample_vis_outputs = torch.cat(sample_vis_outputs, dim=0)   # (B, E)
         
-        all_pooled_output = torch.cat([txt_pooled_output, sample_vis_outputs], dim=-1)
+        all_pooled_output = torch.cat([txt_pooled_output, sample_vis_outputs], dim=-1)  # (B, E_v + E_t)
 
         pooled_output = self.dropout(all_pooled_output)
         logits = self.classifier(pooled_output)

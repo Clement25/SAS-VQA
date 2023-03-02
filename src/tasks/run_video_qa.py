@@ -237,6 +237,7 @@ def validate(model, val_loader, cfg, eval_score=True):
     st = time.time()
     debug_step = 5
     pbar = tqdm(total=len(val_loader))
+    
     for val_step, batch in enumerate(val_loader):
         # forward pass
         question_ids = batch["question_ids"]
@@ -336,6 +337,7 @@ def validate(model, val_loader, cfg, eval_score=True):
                     _num = gathered_ratios[
                         scores_k.replace("acc", "ratio")][1]
                     gathered_v = gathered_v * 1. / _num if _num != 0 else 0
+                    
             if cfg.task in ["action", "transition", "msvd_qa", "frameqa", "msrvtt_qa"]:
                 gathered_scores[scores_k] = get_rounded_percentage(
                     gathered_v)
@@ -415,9 +417,7 @@ def start_training(cfg):
         
     if hvd.rank() == 0:
         LOGGER.info("Saving training meta...")
-        # save_training_meta(cfg)
-        path = join(
-            cfg.output_dir, 'log', "detectron2_model_cfg.yaml")
+        save_training_meta(cfg)
         LOGGER.info("Saving training done...")
         TB_LOGGER.create(join(cfg.output_dir, 'log'))
         pbar = tqdm(total=cfg.num_train_steps)
@@ -449,6 +449,7 @@ def start_training(cfg):
         optimizer.zero_grad()
         if global_step == 0:
             optimizer.step()
+            
     debug_step = 3
     running_loss = RunningMeter('train_loss')
     for step, batch in enumerate(InfiniteIterator(train_loader)):
@@ -584,11 +585,12 @@ def start_inference(cfg):
         cfg.output_dir, f"ckpt/model_step_{cfg.inference_model_step}.pt")
     cfg.e2e_weights_path = e2e_weights_path
     model = setup_model(cfg, device=device)
-    model.eval()
-
-    # FIXME separate scaling for each loss
-    model = amp.initialize(
-        model, enabled=cfg.fp16, opt_level='O2')
+    
+    # restore
+    save_path = f'{cfg.output_dir}/restore.pt'
+    checkpoint = torch.load(save_path)
+    model.load_state_dict(checkpoint['model_state_dict'])
+    model.cuda().eval()
 
     global_step = 0
     # prepare data
