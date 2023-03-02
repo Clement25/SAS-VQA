@@ -413,6 +413,7 @@ def start_training(cfg):
     restorer = TrainingRestorer(cfg, model, optimizer)
     global_step = restorer.global_step
     TB_LOGGER.global_step = global_step
+        
     if hvd.rank() == 0:
         LOGGER.info("Saving training meta...")
         # save_training_meta(cfg)
@@ -469,6 +470,9 @@ def start_training(cfg):
             zero_none_grad(model)
             optimizer.synchronize()
 
+        # display loss
+        pbar.set_description(str(running_loss))
+
         # optimizer
         if (step + 1) % cfg.gradient_accumulation_steps == 0:
             global_step += 1
@@ -490,7 +494,7 @@ def start_training(cfg):
                 multi_step_epoch=n_epoch)
 
             # Hardcoded param group length
-            assert len(optimizer.param_groups) == 8
+            # assert len(optimizer.param_groups) == 8
             for pg_n, param_group in enumerate(
                     optimizer.param_groups):
                 if pg_n in [0, 1]:

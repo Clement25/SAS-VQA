@@ -96,25 +96,17 @@ def build_optimizer_w_lr_mul(model_param_optimizer, learning_rate,
 def setup_e2e_optimizer(model, opts):
     """model_type: str, one of [transformer, cnn]"""
 
-    transformer_param_optimizer = [
+    clip_param_optimizer = [
         (n, p) for n, p in list(model.named_parameters())
-        if "transformer" in n and p.requires_grad]
-    cnn_param_optimizer = [
-        (n, p) for n, p in list(model.named_parameters())
-        if "cnn" in n and p.requires_grad]
-    trasformer_grouped_parameters = build_e2e_optimizer_w_lr_mul(
-        transformer_param_optimizer,
+        if "clip" in n and p.requires_grad]
+    clip_grouped_parameters = build_e2e_optimizer_w_lr_mul(
+        clip_param_optimizer,
         opts.learning_rate, opts.weight_decay,
         lr_mul=opts.transformer_lr_mul,
         lr_mul_prefix=opts.transformer_lr_mul_prefix)
-    cnn_grouped_parameters = build_e2e_optimizer_w_lr_mul(
-        cnn_param_optimizer,
-        opts.cnn_learning_rate, opts.cnn_weight_decay,
-        lr_mul=opts.cnn_lr_mul, lr_mul_prefix=opts.cnn_lr_mul_prefix)
 
     optimizer_grouped_parameters = []
-    optimizer_grouped_parameters.extend(trasformer_grouped_parameters)
-    optimizer_grouped_parameters.extend(cnn_grouped_parameters)
+    optimizer_grouped_parameters.extend(clip_grouped_parameters)
     if opts.optim == 'adam':
         OptimCls = Adam
     elif opts.optim == 'adamax':
