@@ -346,7 +346,7 @@ class SharedConfigs(object):
 
         # manually setup config by task type
         args = self.parse_args()
-        if args.max_n_example_per_group != 1:
+        if args.max_n_example_per_group != 1 and args.task == 'tgif':
             Warning(f"For TGIF-QA, most GIF is only paired with a single example, no need to"
                     f"use max_n_example_per_group={args.max_n_example_per_group}"
                     f"larger than 1. Automatically reset to 1.")

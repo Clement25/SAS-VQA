@@ -111,7 +111,7 @@ def mk_tgif_qa_dataloader(task_type, anno_path, img_hdf5_dir, cfg, tokenizer,
         LOGGER.info(f"datalist {len(datalist)}")
 
     # examples grouped by image/video id
-    grouped = defaultdict(list)  
+    grouped = defaultdict(list)
     for d in datalist:
         grouped[d["video_id"]].append(d)
     LOGGER.info(f"grouped {len(grouped)}")
@@ -416,8 +416,8 @@ def start_training(cfg):
     TB_LOGGER.global_step = global_step
         
     if hvd.rank() == 0:
-        LOGGER.info("Saving training meta...")
-        save_training_meta(cfg)
+        # LOGGER.info("Saving training meta...")
+        # save_training_meta(cfg)
         LOGGER.info("Saving training done...")
         TB_LOGGER.create(join(cfg.output_dir, 'log'))
         pbar = tqdm(total=cfg.num_train_steps)

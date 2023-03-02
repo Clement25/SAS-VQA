@@ -23,11 +23,6 @@ def save_training_meta(args):
     save_args_path = join(args.output_dir, 'log', 'args.json')
     save_json(args, save_args_path, save_pretty=True)
 
-    # model args
-    model_config = json.load(open(args.model_config))
-    save_model_config_path = join(args.output_dir, 'log', 'model_config.json')
-    save_json(model_config, save_model_config_path, save_pretty=True)
-
     # save a copy of the codebase. !!!Do not store heavy file in your codebase when using it.
     code_dir = dirname(dirname(dirname(os.path.realpath(__file__))))
     code_zip_filename = os.path.join(args.output_dir, "code.zip")
@@ -257,9 +252,8 @@ class E2E_TrainingRestorer(object):
         self.model = model
         
         self.optimizer = optimizer
-        if optimizer is not None:
-            self.save_steps = int(opts.save_steps_ratio * opts.num_train_steps)
-            self.amp = opts.fp16
+        self.save_steps = int(opts.save_steps_ratio * opts.num_train_steps)
+        self.amp = opts.fp16
         # since saving to or loading from azure blob fails sometimes
         self.max_save_load_trial = 10
         if exists(self.save_path) or exists(self.backup_path):

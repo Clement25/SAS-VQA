@@ -38,7 +38,6 @@
   "train_n_clips": 8,
   "score_agg_func": "lse",
   "max_n_example_per_group": 1,
-  "model_config": "src/configs/base_model.json",
   "detectron2_weights_path": null,
   "bert_weights_path": null,
   "output_dir": "saved_models/msvd_qa_002",

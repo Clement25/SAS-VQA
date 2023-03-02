@@ -15,10 +15,10 @@ class CLIPModelforFinetune(nn.Module):
         
     def forward(self, batch):
         # used to make visual feature copies
-        visual_features = batch['visual_inputs']
         repeat_counts = batch["n_examples_list"]
 
-        vis_inputs = {'pixel_values': repeat_tensor_rows(visual_features, repeat_counts)}
+        # vis_inputs = {'pixel_values': repeat_tensor_rows(visual_features, repeat_counts)}
+        vis_inputs = {'pixel_values': batch['visual_inputs']}
         
         txt_inputs = {'input_ids': batch['text_input_ids'], \
                         'attention_mask': batch['text_attention_mask']}
@@ -27,7 +27,8 @@ class CLIPModelforFinetune(nn.Module):
         logits = self.VLModel(
                                 txt_inputs=txt_inputs,
                                 vis_inputs=vis_inputs,
-                                video_start_end=batch['video_start_end']
+                                video_start_end=batch['video_start_end'],
+                                repeat_counts = None if all(rc == 1 for rc in repeat_counts) else repeat_counts
                             )
         
         logits, loss = self.calc_loss(logits, batch['labels'])

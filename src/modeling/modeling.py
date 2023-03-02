@@ -223,7 +223,7 @@ class CLIPForSeqClassification(nn.Module):
             nn.Linear(config.outlayer_size, config.num_labels)
         )
 
-    def forward(self, txt_inputs, vis_inputs, video_start_end):
+    def forward(self, txt_inputs, vis_inputs, video_start_end, repeat_counts=None):
         outputs = self.clip(
             txt_inputs=txt_inputs,
             vis_inputs=vis_inputs,
@@ -234,8 +234,12 @@ class CLIPForSeqClassification(nn.Module):
 
         # for unequal numbers of video frames
         sample_vis_outputs = []
-        for s, e in zip(video_start_end[:-1],video_start_end[1:]):
-            sample_vis_outputs.append(vis_pooled_output[s:e].mean(dim=0, keepdim=True))  # List of (1, E) 
+        if repeat_counts is None:
+            for s, e in zip(video_start_end[:-1],video_start_end[1:]):
+                sample_vis_outputs.append(vis_pooled_output[s:e].mean(dim=0, keepdim=True))  # List of (1, E) 
+        else:
+            for s, e, rc in zip(video_start_end[:-1], video_start_end[1:], repeat_counts):
+                sample_vis_outputs.append(vis_pooled_output[s:e].mean(dim=0).repeat(rc, 1)) # (rc, E)
         sample_vis_outputs = torch.cat(sample_vis_outputs, dim=0)   # (B, E)
         
         all_pooled_output = torch.cat([txt_pooled_output, sample_vis_outputs], dim=-1)  # (B, E_v + E_t)
