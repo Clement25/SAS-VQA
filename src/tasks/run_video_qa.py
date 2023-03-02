@@ -227,7 +227,7 @@ def forward_step(model, batch, cfg):
     return outputs
 
 @torch.no_grad()
-def validate(model, val_loader, cfg, train_global_step, eval_score=True):
+def validate(model, val_loader, cfg, eval_score=True):
     """use eval_score=False when doing inference on test sets where answers are not available"""
     model.eval()
 
@@ -240,7 +240,6 @@ def validate(model, val_loader, cfg, train_global_step, eval_score=True):
     for val_step, batch in enumerate(val_loader):
         # forward pass
         question_ids = batch["question_ids"]
-        bsz = len(question_ids)
         # used to make visual feature copies
         del batch["question_ids"]
         # add visual part into the mini batch and perform inference
@@ -337,7 +336,7 @@ def validate(model, val_loader, cfg, train_global_step, eval_score=True):
                     _num = gathered_ratios[
                         scores_k.replace("acc", "ratio")][1]
                     gathered_v = gathered_v * 1. / _num if _num != 0 else 0
-            if cfg.task in ["action", "transition", "frameqa", "msrvtt_qa"]:
+            if cfg.task in ["action", "transition", "msvd_qa", "frameqa", "msrvtt_qa"]:
                 gathered_scores[scores_k] = get_rounded_percentage(
                     gathered_v)
             else:
@@ -579,14 +578,6 @@ def start_inference(cfg):
                 "16-bits training: {}".format(
                     device, n_gpu, hvd.rank(), bool(cfg.fp16)))
 
-    # overwrite cfg with stored_cfg,
-    # but skip keys containing the keyword 'inference'
-    stored_cfg_path = join(cfg.output_dir, "log/args.json")
-    stored_cfg = edict(load_json(stored_cfg_path))
-    for k, v in cfg.items():
-        if k in stored_cfg and "inference" not in k:
-            setattr(cfg, k, stored_cfg[k])
-
     # setup models
     cfg.model_config = join(cfg.output_dir, "log/model_config.json")
     e2e_weights_path = join(
@@ -601,18 +592,16 @@ def start_inference(cfg):
 
     global_step = 0
     # prepare data
-    tokenizer = BertTokenizerFast.from_pretrained(cfg.tokenizer_dir)
+    tokenizer = CLIPTokenizerFast.from_pretrained(cfg.model.clip_pretrained_model)
     cfg.data_ratio = 1.
     val_loader = mk_tgif_qa_dataloader(
         task_type=cfg.task,
         anno_path=cfg.inference_txt_db,
-        lmdb_dir=cfg.inference_img_db,
+        img_hdf5_dir=cfg.inference_img_db,
         cfg=cfg, tokenizer=tokenizer,
         is_train=False,
         return_label=False
     )
-    img_norm = ImageNorm(mean=cfg.img_pixel_mean, std=cfg.img_pixel_std)
-    val_loader = PrefetchLoader(val_loader, img_norm)
 
     LOGGER.info(cfg)
     LOGGER.info("Starting inference...")
@@ -621,7 +610,7 @@ def start_inference(cfg):
 
     LOGGER.info(f'Step {global_step}: start validation')
     qa_results, qa_scores = validate(
-        model, val_loader, cfg, global_step,
+        model, val_loader, cfg, 
         eval_score=True)  # cfg.inference_split == "val"
 
     if hvd.rank() == 0:
@@ -670,9 +659,6 @@ if __name__ == '__main__':
     hvd.init()
     input_cfg = shared_configs.get_video_qa_args()
     if input_cfg.do_inference:
-        # assert hvd.size() == 1, \
-        #     "Please use single GPU for evaluation! " \
-        #     "Multi-GPU might miss some examples."
         start_inference(input_cfg)
     else:
         start_training(input_cfg)
