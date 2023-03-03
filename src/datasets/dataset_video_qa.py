@@ -86,7 +86,7 @@ class VideoQADataset(BaseDataset):
             example["options_str_list"] = data["options"]
         elif self.task_type in self.open_ended_qa_names:
             if self.return_label:
-                example["label"] = self.ans2label.get(example["label"], self.ans2label["<unk>"])  # map to <unk> if it is an oov word
+                example["label"] = self.ans2label[example["label"]]  # map to <unk> if it is an oov word
         if not self.return_label:
             example["label"] = None
         return example
@@ -113,14 +113,15 @@ class VideoQADataset(BaseDataset):
             msvd_qa={k: idx for idx, k in enumerate(["what", "who", "how", "where", "when"])},
         )
 
+        # qid: wid
         qid2pred_ans = {r["question_id"]: r["answer"] for r in results}
-        if self.task_type in self.open_ended_qa_names:  # convert ans_idx, int --> str
-            qid2pred_ans = {k: self.label2ans[v] for k, v in qid2pred_ans.items()}
-
+        # if self.task_type in self.open_ended_qa_names:  # convert ans_idx, int --> str
+        #     qid2pred_ans = {k: self.label2ans[v] for k, v in qid2pred_ans.items()}
+            
         for qid, pred_ans in qid2pred_ans.items():
             preds.append(pred_ans)
             gt_data = self.qid2data[qid]
-            gt_ans = gt_data["answer"]
+            gt_ans = self.ans2label[gt_data["answer"]]
             if self.task_type in self.open_ended_qa_names:
                 answer_types.append(answer_type2idx[self.task_type][gt_data["answer_type"]])
             gts.append(gt_ans)
