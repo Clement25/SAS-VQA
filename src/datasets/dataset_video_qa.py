@@ -86,7 +86,7 @@ class VideoQADataset(BaseDataset):
             example["options_str_list"] = data["options"]
         elif self.task_type in self.open_ended_qa_names:
             if self.return_label:
-                example["label"] = self.ans2label[example["label"]]
+                example["label"] = self.ans2label.get(example["label"], self.ans2label["<unk>"])  # map to <unk> if it is an oov word
         if not self.return_label:
             example["label"] = None
         return example
