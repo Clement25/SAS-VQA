@@ -50,7 +50,7 @@ class CLIPModelforFinetune(nn.Module):
                     loss = instance_bce_with_logits(
                         logits, labels, reduction="none")
                 elif self.config.loss_type == "ce":  # cross_entropy [GQA, Retrieval, Captioning]
-                    loss_fct = CrossEntropyLoss(reduction="none")
+                    loss_fct = CrossEntropyLoss(ignore_index=-100)
                     loss = loss_fct(
                         logits.view(-1, self.config.num_labels),
                         labels.view(-1))

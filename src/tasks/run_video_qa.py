@@ -3,7 +3,7 @@ import os
 import time
 import random, math
 import json
-from transformers import BertConfig, BertTokenizerFast
+from transformers import BertTokenizerFast
 from transformers import CLIPTokenizerFast
 
 import sys
@@ -28,7 +28,7 @@ from src.optimization.utils import setup_e2e_optimizer
 
 from tqdm import tqdm
 from os.path import join
-from easydict import EasyDict as edict
+from collections import Counter
 from apex import amp
 from torch.utils.data.distributed import DistributedSampler
 import horovod.torch as hvd
@@ -36,7 +36,7 @@ from src.utils.distributed import all_gather_list
 from collections import defaultdict
 
 
-def mk_tgif_qa_dataloader(task_type, anno_path, img_hdf5_dir, cfg, tokenizer,
+def mk_tgif_qa_dataloader(task_type, anno_path, ans2label, img_hdf5_dir, cfg, tokenizer,
                           is_train=True, return_label=True):
     """
     Returns:
@@ -124,9 +124,7 @@ def mk_tgif_qa_dataloader(task_type, anno_path, img_hdf5_dir, cfg, tokenizer,
     )
     LOGGER.info(f"group_datalist {len(group_datalist)}")
 
-    ans2label = load_json(cfg.ans2label_path)
     vidmapping = load_json(cfg.vid_mapping)
-
     dataset = VideoQADataset(
         task_type=cfg.task,
         datalist=group_datalist,
@@ -163,19 +161,36 @@ def mk_tgif_qa_dataloader(task_type, anno_path, img_hdf5_dir, cfg, tokenizer,
                             collate_fn=vqa_collator.collate_batch)
     return dataloader
 
+def build_common_answer_dict(anno_files, k=1500):
+    answer_list = []
+
+    for file in anno_files:
+        with open(file, 'r') as f:
+            qa_list = json.load(f)
+            answer_list += list(map(lambda qa: qa['answer'], qa_list))
+
+    answer_occ = Counter(answer_list)
+    top_k_answer = answer_occ.most_common(k)
+    answer_dict = {val: i for i, (val, _) in enumerate(top_k_answer)}
+    return answer_dict
+
 
 def setup_dataloaders(cfg, tokenizer):
     LOGGER.info("Init. train_loader and val_loader...")
     if cfg.task == 'msvd_qa':
+        anno_files = (cfg.train_datasets[0].txt, cfg.val_datasets[0].txt)
+        ans2label = build_common_answer_dict(anno_files, 1000)
         train_loader = mk_tgif_qa_dataloader(
             task_type=cfg.task,
             anno_path=cfg.train_datasets[0].txt,
+            ans2label=ans2label,
             img_hdf5_dir=cfg.train_datasets[0].img,
             cfg=cfg, tokenizer=tokenizer, is_train=True
         )
         val_loader = mk_tgif_qa_dataloader(
             task_type=cfg.task,
             anno_path=cfg.val_datasets[0].txt,
+            ans2label=ans2label,
             img_hdf5_dir=cfg.train_datasets[0].img,
             cfg=cfg, tokenizer=tokenizer, is_train=False, return_label=False
         )
@@ -253,7 +268,6 @@ def validate(model, val_loader, cfg, eval_score=True):
         # multi-frame test, scores across frames of the same video will be pooled together
         pool_method = cfg.score_agg_func
         # could be 1, where only a single clip is evaluated
-        num_frm = cfg.num_frm
         
         # (B * max(num_frm), C, H, W)
         losses = []
@@ -267,7 +281,7 @@ def validate(model, val_loader, cfg, eval_score=True):
 
         if cfg.task in ["action", "transition", "frameqa", "msvd_qa", "msrvtt_qa"]:
             # cross entropy
-            pred_labels = logits.max(dim=-1)[1].data.tolist()
+            pred_labels = logits.argmax(dim=-1).tolist()
         else:
             # mse
             preds = (logits + 0.5).long().clamp(min=1, max=10)
@@ -394,7 +408,7 @@ def start_training(cfg):
     hvd.broadcast_optimizer_state(optimizer, root_rank=0)
 
     model, optimizer = amp.initialize(
-        model, optimizer, enabled=cfg.fp16, opt_level='O2',
+        model, optimizer, opt_level='O0',
         keep_batchnorm_fp32=True)
 
     # compute the number of steps and update cfg
@@ -418,7 +432,7 @@ def start_training(cfg):
     if hvd.rank() == 0:
         # LOGGER.info("Saving training meta...")
         # save_training_meta(cfg)
-        LOGGER.info("Saving training done...")
+        # LOGGER.info("Saving training done...")
         TB_LOGGER.create(join(cfg.output_dir, 'log'))
         pbar = tqdm(total=cfg.num_train_steps)
         model_saver = ModelSaver(join(cfg.output_dir, "ckpt"))
@@ -452,13 +466,18 @@ def start_training(cfg):
             
     debug_step = 3
     running_loss = RunningMeter('train_loss')
+    
+    total_correct = total_preds = 0
     for step, batch in enumerate(InfiniteIterator(train_loader)):
         # forward pass
         del batch["question_ids"]
-        logits = []
         outputs = forward_step(model, batch, cfg)
         
-        logits.append(outputs["logits"])
+        logits = outputs["logits"]
+        preds = logits.argmax(dim=-1)
+        total_correct += (preds == batch["labels"]).sum()
+        total_preds += len(preds)
+        
         loss = outputs["loss"].mean()
         running_loss(loss.item())
         # backward pass
@@ -470,13 +489,11 @@ def start_training(cfg):
             zero_none_grad(model)
             optimizer.synchronize()
 
-        # display loss
-        pbar.set_description(str(running_loss))
-
         # optimizer
         if (step + 1) % cfg.gradient_accumulation_steps == 0:
+            acc = total_correct / total_preds
+            pbar.set_description(str(running_loss)+' acc: {:2.3f}'.format(acc * 100))
             global_step += 1
-
             # learning rate scheduling
             n_epoch = int(1. * total_train_batch_size * global_step
                           / total_n_examples)
@@ -543,6 +560,7 @@ def start_training(cfg):
                 qa_results, qa_scores = validate(
                     model, val_loader, cfg, global_step)
                 model_saver.save(step=global_step, model=model)
+                total_correct = total_preds = 0
         if global_step >= cfg.num_train_steps:
             break
 
@@ -593,12 +611,14 @@ def start_inference(cfg):
     model.cuda().eval()
 
     global_step = 0
+    ans2label = build_common_answer_dict(annofiles=(cfg.train_datasets[0].txt, cfg.val_datasets[0].txt))
     # prepare data
     tokenizer = CLIPTokenizerFast.from_pretrained(cfg.model.clip_pretrained_model)
     cfg.data_ratio = 1.
     val_loader = mk_tgif_qa_dataloader(
         task_type=cfg.task,
         anno_path=cfg.inference_txt_db,
+        ans2label=ans2label,
         img_hdf5_dir=cfg.inference_img_db,
         cfg=cfg, tokenizer=tokenizer,
         is_train=False,

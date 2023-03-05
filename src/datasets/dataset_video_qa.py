@@ -11,6 +11,8 @@ from transformers import CLIPTokenizerFast
 from src.datasets.data_utils import mk_input_group
 from collections import defaultdict
 
+IGNORE_INDEX=-100
+
 class VideoQADataset(BaseDataset):
     """ This should work for both train and test (where labels are not available).
     task_type: str, one of [action, frameqa, transition]
@@ -27,8 +29,7 @@ class VideoQADataset(BaseDataset):
     """
 
     def __init__(self, task_type, datalist, tokenizer, img_hdf5_dir,
-                 fps=3, num_frm=3, max_img_size=1000, max_txt_len=20, ans2label=None, vid2id=None,
-                 ensemble_n_clips=1, return_label=True, is_train=True, random_sample_clips=True):
+                 fps=3, num_frm=3, max_img_size=1000, max_txt_len=20, ans2label=None, vid2id=None, ensemble_n_clips=1, return_label=True, is_train=True, random_sample_clips=True):
         super(VideoQADataset, self).__init__(
             datalist, tokenizer, img_hdf5_dir,
             fps=fps, num_frm=num_frm,
@@ -86,7 +87,7 @@ class VideoQADataset(BaseDataset):
             example["options_str_list"] = data["options"]
         elif self.task_type in self.open_ended_qa_names:
             if self.return_label:
-                example["label"] = self.ans2label[example["label"]]  # map to <unk> if it is an oov word
+                example["label"] = self.ans2label.get(example["label"], IGNORE_INDEX)
         if not self.return_label:
             example["label"] = None
         return example
@@ -103,8 +104,7 @@ class VideoQADataset(BaseDataset):
         Returns:
             TGIF-QA score
         """
-        preds = []
-        gts = []
+        preds, gts = [], []
         # for frameQA
         answer_types = []
         answer_type2idx = dict(
@@ -119,18 +119,25 @@ class VideoQADataset(BaseDataset):
         #     qid2pred_ans = {k: self.label2ans[v] for k, v in qid2pred_ans.items()}
             
         for qid, pred_ans in qid2pred_ans.items():
-            preds.append(pred_ans)
+            if type(pred_ans) is list:
+                preds.extend(pred_ans)
+            else:
+                preds.append(pred_ans)
             gt_data = self.qid2data[qid]
-            gt_ans = self.ans2label[gt_data["answer"]]
+            gt_ans = self.ans2label.get(gt_data["answer"], IGNORE_INDEX)
             if self.task_type in self.open_ended_qa_names:
                 answer_types.append(answer_type2idx[self.task_type][gt_data["answer_type"]])
             gts.append(gt_ans)
 
-        preds = np.array(preds)
-        gts = np.array(gts)
+        preds, gts = np.array(preds), np.array(gts)
         metrics = dict()
         # preds and gts are array of strings
-        metrics["overall_acc"] = float(np.mean(preds == gts))
+        # ignore special indices
+        if IGNORE_INDEX in gts:
+            metrics["overall_acc"] = float(sum(preds == gts) / sum(gts != IGNORE_INDEX))
+        else:
+            metrics["overall_acc"] = float(np.mean(preds == gts))
+
         if self.task_type in self.open_ended_qa_names:
             answer_types = np.array(answer_types)
             ratios = dict()
@@ -176,10 +183,15 @@ class VideoQACollator(object):
         text_input_ids = batch_enc.input_ids  # (B, L)
         text_attention_mask = batch_enc.attention_mask  # (B, L)
         
-        B, L, _ = visual_inputs.size()
-        visual_inputs = visual_inputs.reshape(B*L, 3, 224, 224)
+        # B, L, _ = visual_inputs.size()
+        # visual_inputs = visual_inputs.reshape(B*L, 3, 224, 224)
+        # video_lengths = [L] * B
+        # FIXME: try single picture 
+        visual_inputs = visual_inputs[:, 8]
+        B, _ = visual_inputs.size()
+        visual_inputs = visual_inputs.reshape(B, 3, 224, 224)
+        video_lengths = [1] * B
         
-        video_lengths = [L] * B
         video_start_end = [0]
         for l in video_lengths:
             video_start_end.append(video_start_end[-1] + l)

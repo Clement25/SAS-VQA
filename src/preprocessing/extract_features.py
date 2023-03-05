@@ -51,7 +51,6 @@ def extract_clips_with_consecutive_frames(path, processor, model, args):
         print('file {} error'.format(path))
         raise ValueError
     
-    chunk_size = getattr(args, 'trunk_size', 128)
     intv = getattr(args, 'intv', 4)
     total_frames = len(video_data)
     frames = video_data[::intv]
@@ -96,6 +95,7 @@ def generate_h5(processor, model, video_paths, args, h5_outfile):  # default-8
                     flens = fd['frame_lengths'] = np.zeros(shape=(len(video_paths), 1))
 
             i1 = i0 + 1
+            # if exceeds the maximum lengths, cut the frames
             flens[i0] = video_length
             feat_dset[i0][:video_length] = frames_torch
             i0 = i1

@@ -200,7 +200,24 @@ ClipBertForSequenceClassificationConfig = dict(
     loss_type="bce"  # [BCE, CE, KLDivLoss] only used when num_labels > 1
 )
 
-
+class CrossAttentionLayer(nn.Module):
+    def __init__(self, in_size, dropout, nhead):
+        super(CrossAttentionLayer, self).__init__()
+        AttentionLayer = torch.nn.TransformerDecoderLayer(
+            d_model=in_size,
+            nhead=nhead,
+            dropout=dropout,
+            dim_feedforward=4*in_size,
+            batch_first=True,
+            layer_norm_eps=1e-12,
+            activation=torch.nn.functional.gelu,
+        )
+        self.attention = torch.nn.TransformerDecoder(decoder_layer=AttentionLayer, num_layers=2)
+    
+    def forward(self, txt_in, vis_in):
+        return self.attention(txt_in, vis_in)
+        
+        
 class CLIPForSeqClassification(nn.Module):
     """
     Modified from BertForSequenceClassification to support oscar training.
@@ -215,13 +232,18 @@ class CLIPForSeqClassification(nn.Module):
         if config.freeze:
             for p in self.clip.parameters():
                 p.requires_grad = False
-
-        self.classifier = nn.Sequential(
-            nn.Linear(config.txt_output_size + config.vis_output_size,
-                      config.outlayer_size),
-            nn.ReLU(True),
-            nn.Linear(config.outlayer_size, config.num_labels)
+                
+        self.proj = nn.Linear(config.vis_output_size, config.txt_output_size)
+        self.attention = CrossAttentionLayer(
+            in_size=config.txt_output_size, dropout=0.1, nhead=8 
         )
+        self.classifier = nn.Linear(config.txt_output_size, config.num_labels)
+        # self.classifier = nn.Sequential(
+        #     nn.Linear(config.txt_output_size + config.vis_output_size,
+        #               config.outlayer_size),
+        #     nn.ReLU(True),
+        #     nn.Linear(config.outlayer_size, config.num_labels)
+        # )
 
     def forward(self, txt_inputs, vis_inputs, video_start_end, repeat_counts=None):
         outputs = self.clip(
@@ -229,8 +251,8 @@ class CLIPForSeqClassification(nn.Module):
             vis_inputs=vis_inputs,
         )
         txt_output, vis_output = outputs['txt_out'], outputs['vis_out']
-        vis_pooled_output = vis_output.pooler_output    # (B, E)
-        txt_pooled_output = txt_output.pooler_output    # (\sum L_i, E)
+        vis_pooled_output = vis_output.pooler_output    # (\sum L_i, E)
+        txt_pooled_output = txt_output.pooler_output    # (B, E_t)
 
         # for unequal numbers of video frames
         sample_vis_outputs = []
@@ -239,13 +261,14 @@ class CLIPForSeqClassification(nn.Module):
                 sample_vis_outputs.append(vis_pooled_output[s:e].mean(dim=0, keepdim=True))  # List of (1, E) 
         else:
             for s, e, rc in zip(video_start_end[:-1], video_start_end[1:], repeat_counts):
-                sample_vis_outputs.append(vis_pooled_output[s:e].mean(dim=0).repeat(rc, 1)) # (rc, E)
-        sample_vis_outputs = torch.cat(sample_vis_outputs, dim=0)   # (B, E)
-        
-        all_pooled_output = torch.cat([txt_pooled_output, sample_vis_outputs], dim=-1)  # (B, E_v + E_t)
-
-        pooled_output = self.dropout(all_pooled_output)
-        logits = self.classifier(pooled_output)
+                sample_vis_outputs.append(vis_pooled_output[s:e].mean(dim=0).repeat(rc, 1)) # (rc, E_v)
+        sample_vis_outputs = torch.cat(sample_vis_outputs, dim=0)   # (B, E_v)
+        # all_pooled_output = torch.cat([txt_pooled_output, sample_vis_outputs], dim=-1)  # (B, E_v + E_t)
+        # pooled_output = self.dropout(all_pooled_output)
+        # logits = self.classifier(pooled_output)
+        vis_output = self.proj(sample_vis_outputs).unsqueeze(1) # (B, 1, E_v)
+        attn_outputs = self.attention(txt_pooled_output.unsqueeze(1), vis_output)
+        logits = self.classifier(attn_outputs)
         return logits
 
 
