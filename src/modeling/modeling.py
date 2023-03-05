@@ -6,7 +6,7 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 
-from transformers import CLIPVisionModel, CLIPTextModel
+from transformers import CLIPVisionModel, CLIPTextModel, CLIPVisionModelWithProjection
 from apex.normalization.fused_layer_norm import FusedLayerNorm as LayerNorm
 
 
@@ -173,7 +173,7 @@ class CLIPBaseModel(nn.Module):
         super().__init__()
         self.config = config
         self.txt_model = CLIPTextModel.from_pretrained(config.clip_pretrained_model)
-        self.vis_modal = CLIPVisionModel.from_pretrained(config.clip_pretrained_model)
+        self.vis_modal = CLIPVisionModelWithProjection.from_pretrained(config.clip_pretrained_model)
 
     def forward(self, txt_inputs, vis_inputs):
         r"""Modified from BertModel
@@ -212,7 +212,7 @@ class CrossAttentionLayer(nn.Module):
             layer_norm_eps=1e-12,
             activation=torch.nn.functional.gelu,
         )
-        self.attention = torch.nn.TransformerDecoder(decoder_layer=AttentionLayer, num_layers=2)
+        self.attention = torch.nn.TransformerDecoder(decoder_layer=AttentionLayer, num_layers=1)
     
     def forward(self, txt_in, vis_in):
         return self.attention(txt_in, vis_in)
@@ -233,17 +233,10 @@ class CLIPForSeqClassification(nn.Module):
             for p in self.clip.parameters():
                 p.requires_grad = False
                 
-        self.proj = nn.Linear(config.vis_output_size, config.txt_output_size)
         self.attention = CrossAttentionLayer(
             in_size=config.txt_output_size, dropout=0.1, nhead=8 
         )
         self.classifier = nn.Linear(config.txt_output_size, config.num_labels)
-        # self.classifier = nn.Sequential(
-        #     nn.Linear(config.txt_output_size + config.vis_output_size,
-        #               config.outlayer_size),
-        #     nn.ReLU(True),
-        #     nn.Linear(config.outlayer_size, config.num_labels)
-        # )
 
     def forward(self, txt_inputs, vis_inputs, video_start_end, repeat_counts=None):
         outputs = self.clip(
@@ -251,24 +244,33 @@ class CLIPForSeqClassification(nn.Module):
             vis_inputs=vis_inputs,
         )
         txt_output, vis_output = outputs['txt_out'], outputs['vis_out']
-        vis_pooled_output = vis_output.pooler_output    # (\sum L_i, E)
+        vis_pooled_output = vis_output.image_embeds    # (\sum L_i, E)
         txt_pooled_output = txt_output.pooler_output    # (B, E_t)
+
+        bsz, e_t = txt_pooled_output.size()
+        decoded_tokens = txt_pooled_output.new_zeros(bsz, 1, e_t)
 
         # for unequal numbers of video frames
         sample_vis_outputs = []
         if repeat_counts is None:
             for s, e in zip(video_start_end[:-1],video_start_end[1:]):
-                sample_vis_outputs.append(vis_pooled_output[s:e].mean(dim=0, keepdim=True))  # List of (1, E) 
+                # sample_vis_outputs.append(vis_pooled_output[s:e].mean(dim=0, keepdim=True))  # List of (1, E) 
+                sample_vis_outputs.append(vis_pooled_output[s:e])  # List of (L, E_v) 
+            sample_vis_outputs = torch.stack(sample_vis_outputs)
         else:
             for s, e, rc in zip(video_start_end[:-1], video_start_end[1:], repeat_counts):
                 sample_vis_outputs.append(vis_pooled_output[s:e].mean(dim=0).repeat(rc, 1)) # (rc, E_v)
-        sample_vis_outputs = torch.cat(sample_vis_outputs, dim=0)   # (B, E_v)
+            sample_vis_outputs = torch.cat(sample_vis_outputs, dim=0)
         # all_pooled_output = torch.cat([txt_pooled_output, sample_vis_outputs], dim=-1)  # (B, E_v + E_t)
         # pooled_output = self.dropout(all_pooled_output)
         # logits = self.classifier(pooled_output)
-        vis_output = self.proj(sample_vis_outputs).unsqueeze(1) # (B, 1, E_v)
-        attn_outputs = self.attention(txt_pooled_output.unsqueeze(1), vis_output)
-        logits = self.classifier(attn_outputs)
+        # vis_output = self.proj(sample_vis_outputs).unsqueeze(1) # (B, L, E_v)
+
+        txt_attn_in = torch.cat([decoded_tokens, txt_output.last_hidden_state], dim=1)
+        vis_attn_in = sample_vis_outputs
+        
+        attn_outputs = self.attention(txt_attn_in, vis_attn_in) # 
+        logits = self.classifier(attn_outputs)[:,0,:]
         return logits
 
 

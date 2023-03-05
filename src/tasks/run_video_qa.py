@@ -178,7 +178,8 @@ def build_common_answer_dict(anno_files, k=1500):
 def setup_dataloaders(cfg, tokenizer):
     LOGGER.info("Init. train_loader and val_loader...")
     if cfg.task == 'msvd_qa':
-        anno_files = (cfg.train_datasets[0].txt, cfg.val_datasets[0].txt)
+        # anno_files = (cfg.train_datasets[0].txt, cfg.val_datasets[0].txt)
+        anno_files = (cfg.train_datasets[0].txt,)
         ans2label = build_common_answer_dict(anno_files, 1000)
         train_loader = mk_tgif_qa_dataloader(
             task_type=cfg.task,
@@ -194,9 +195,18 @@ def setup_dataloaders(cfg, tokenizer):
             img_hdf5_dir=cfg.train_datasets[0].img,
             cfg=cfg, tokenizer=tokenizer, is_train=False, return_label=False
         )
+        test_loader = mk_tgif_qa_dataloader(
+            task_type=cfg.task,
+            anno_path=cfg.inference_txt_db,
+            ans2label=ans2label,
+            img_hdf5_dir=cfg.inference_img_db,
+            cfg=cfg, tokenizer=tokenizer,
+            is_train=False,
+            return_label=False
+        )
     else:
         raise ValueError
-    return train_loader, val_loader
+    return train_loader, val_loader, test_loader
 
 
 def setup_model(cfg, device=None):
@@ -390,7 +400,7 @@ def start_training(cfg):
         tokenizer = CLIPTokenizerFast.from_pretrained(cfg.model.clip_pretrained_model)
     else:
         tokenizer = BertTokenizerFast.from_pretrained(cfg.tokenizer_dir)
-    train_loader, val_loader = setup_dataloaders(cfg, tokenizer)
+    train_loader, val_loader, test_loader = setup_dataloaders(cfg, tokenizer)
 
     model = setup_model(cfg, device=device)
     model.train()
@@ -503,32 +513,19 @@ def start_training(cfg):
                 cfg.num_train_steps, warmup_ratio=cfg.warmup_ratio,
                 decay_epochs=cfg.step_decay_epochs, multi_step_epoch=n_epoch)
 
-            # learning rate scheduling cnn
-            lr_this_step_cnn = get_lr_sched(
-                global_step, cfg.cnn_lr_decay, cfg.cnn_learning_rate,
-                cfg.num_train_steps, warmup_ratio=cfg.warmup_ratio,
-                decay_epochs=cfg.cnn_step_decay_epochs,
-                multi_step_epoch=n_epoch)
-
             # Hardcoded param group length
             # assert len(optimizer.param_groups) == 8
             for pg_n, param_group in enumerate(
                     optimizer.param_groups):
                 if pg_n in [0, 1]:
-                    param_group['lr'] = (
-                        cfg.transformer_lr_mul * lr_this_step_transformer)
+                    param_group['lr'] = lr_this_step_transformer
                 elif pg_n in [2, 3]:
                     param_group['lr'] = lr_this_step_transformer
-                elif pg_n in [4, 5]:
-                    param_group['lr'] = (
-                        cfg.cnn_lr_mul * lr_this_step_cnn)
                 else:
-                    param_group['lr'] = lr_this_step_cnn
+                    param_group['lr'] = lr_this_step_transformer
             TB_LOGGER.add_scalar(
                 "train/lr_transformer", lr_this_step_transformer,
                 global_step)
-            TB_LOGGER.add_scalar(
-                "train/lr_cnn", lr_this_step_cnn, global_step)
 
             TB_LOGGER.add_scalar('train/loss', running_loss.val, global_step)
 
@@ -557,10 +554,11 @@ def start_training(cfg):
             # checkpoint
             if global_step % cfg.valid_steps == 0:
                 LOGGER.info(f'Step {global_step}: start validation')
-                qa_results, qa_scores = validate(
-                    model, val_loader, cfg, global_step)
+                validate(model, val_loader, cfg, global_step)
                 model_saver.save(step=global_step, model=model)
                 total_correct = total_preds = 0
+                validate(model, test_loader, cfg, global_step)
+                
         if global_step >= cfg.num_train_steps:
             break
 
@@ -611,7 +609,7 @@ def start_inference(cfg):
     model.cuda().eval()
 
     global_step = 0
-    ans2label = build_common_answer_dict(annofiles=(cfg.train_datasets[0].txt, cfg.val_datasets[0].txt))
+    ans2label = build_common_answer_dict(anno_files=(cfg.train_datasets[0].txt, cfg.val_datasets[0].txt))
     # prepare data
     tokenizer = CLIPTokenizerFast.from_pretrained(cfg.model.clip_pretrained_model)
     cfg.data_ratio = 1.
