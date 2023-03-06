@@ -187,10 +187,11 @@ class VideoQACollator(object):
         # visual_inputs = visual_inputs.reshape(B*L, 3, 224, 224)
         # video_lengths = [L] * B
         # FIXME: try single picture 
-        visual_inputs = visual_inputs[:, 8]
-        B, _ = visual_inputs.size()
-        visual_inputs = visual_inputs.reshape(B, 3, 224, 224)
-        video_lengths = [1] * B
+        inds = list(range(0,16,4))
+        visual_inputs = visual_inputs[:,inds]
+        B, L, _ = visual_inputs.size()
+        visual_inputs = visual_inputs.reshape(B*L, 3, 224, 224)
+        video_lengths = [L] * B
         
         video_start_end = [0]
         for l in video_lengths:

@@ -1,5 +1,7 @@
 import time
+from heapq import heappush, heappop
 import torch
+from torch.nn.functional import normalize
 
 def encode(seq_tokens, token_to_idx, allow_unk=False):
     seq_idx = []
@@ -24,18 +26,58 @@ def decode(seq_idx, idx_to_token, delim=None, stop_at_end=True):
     else:
         return delim.join(tokens)
 
-def sample_representative_frames(frames, model, args):
-    chunk_size = args.chunk_size
+CHUNK_SIZE = 256
+def sample_representative_frames(frames, model, K=16, W=10, debug_counter=None):
     feat_chunks = []
     num_frames = frames.size(0)
-    num_chunks = num_frames // chunk_size + 1
+    num_chunks = num_frames // CHUNK_SIZE + 1
     
     for i in range(num_chunks):
-        chunk_feats = model(frames[i*chunk_size:(i+1)*chunk_size]).pooler_output
+        chunk_feats = model(frames[i*CHUNK_SIZE:(i+1)*CHUNK_SIZE]).pooler_output
+        chunk_feats = chunk_feats.detach()
+        chunk_feats = normalize(chunk_feats)
         feat_chunks.append(chunk_feats)
 
     all_feats = torch.cat(feat_chunks, dim=0) # (N, 768)
-    all_sims = all_feats @ all_feats.transpose(0, 1)  # (N, N)       
+    all_sims = all_feats @ all_feats.transpose(0, 1)  # (N, N)
+    
+    # filter frames
+    lcl_avg = torch.zeros(all_sims.shape[0])
+    for i in range(all_sims.shape[0]):
+        subsim = all_sims[i][i-W:i+W]
+        lcl_avg[i] = (subsim.sum()-1) / (len(subsim) - 1)
+    
+    # dfs-based search
+    top_idx = lcl_avg.argmax()  # the one has top lcl_avg shoule be preserved
+    res = [top_idx.item()]
+    intvs = []
+    if top_idx - W > 0:
+        v, idx = lcl_avg[0:top_idx-W].topk(1)
+        # intvs.append(((0, top-W), v, idx))
+        heappush(intvs, (-v, (0, top_idx-W), idx))
+    if top_idx + W < len(lcl_avg):
+        v, idx = lcl_avg[top_idx+W:].topk(1)
+        heappush(intvs, (-v, (top_idx+W, len(lcl_avg)), top_idx+W+idx))
+        
+    # while len(intvs) > 0 and len(res) < K:
+    while len(res) < K and len(intvs) > 0:
+        top = heappop(intvs)   # pick the next dominant frame
+        top_idx = top[2][0].item()
+        res.append(top_idx)
+        l, r = top[1]
+        left = top_idx - W
+        right = top_idx + W
+        if left > l:
+            v, idx = lcl_avg[l:left].topk(1)
+            heappush(intvs, (-v, (l, left), l+idx))
+        if right < r:
+            v, idx = lcl_avg[right:r].topk(1)
+            heappush(intvs, (-v, (right, r), right+idx))
+    
+    if len(res) < K:
+        res = lcl_avg.topk(K)[1]
+        debug_counter['Failure'] += 1
+    return frames[res]
 
 def sample_frames_uniform(frames, K=8):
     num_frames = len(frames)

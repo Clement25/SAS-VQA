@@ -261,10 +261,6 @@ class CLIPForSeqClassification(nn.Module):
             for s, e, rc in zip(video_start_end[:-1], video_start_end[1:], repeat_counts):
                 sample_vis_outputs.append(vis_pooled_output[s:e].mean(dim=0).repeat(rc, 1)) # (rc, E_v)
             sample_vis_outputs = torch.cat(sample_vis_outputs, dim=0)
-        # all_pooled_output = torch.cat([txt_pooled_output, sample_vis_outputs], dim=-1)  # (B, E_v + E_t)
-        # pooled_output = self.dropout(all_pooled_output)
-        # logits = self.classifier(pooled_output)
-        # vis_output = self.proj(sample_vis_outputs).unsqueeze(1) # (B, L, E_v)
 
         txt_attn_in = torch.cat([decoded_tokens, txt_output.last_hidden_state], dim=1)
         vis_attn_in = sample_vis_outputs

@@ -1,5 +1,4 @@
 import argparse, os
-os.environ['CUDA_VISIBLE_DEVICES'] = '0'
 import h5py, json
 import cv2
 from PIL import Image
@@ -18,6 +17,7 @@ from transformers import CLIPImageProcessor, CLIPVisionModel
 from prefetch_loader import *
 from queue import Queue, Empty, Full
 from threading import Thread
+from collections import Counter
 
 def generate_vidid_json(video_paths, json_outfile):
     mapping_dict = {}
@@ -25,37 +25,6 @@ def generate_vidid_json(video_paths, json_outfile):
         video_id = video_path.split('/')[-1].split('.')[0]
         mapping_dict[video_id] = i
     json.dump(mapping_dict, open(json_outfile, 'w'))
-
-def extract_clips_with_consecutive_frames(path, processor, model, args):
-    """
-    Args:
-        path: path of a video
-        num_clips: expected numbers of splitted clips
-        num_frames_per_clip: number of frames in a single clip, pretrained model only supports 16 frames
-    Returns:
-        A list of raw features of clips.
-    """
-    valid = True
-    try:
-        cap = cv2.VideoCapture(path)
-        video_data = []
-        if cap.isOpened():
-            rval, frame = cap.read()
-            while rval:
-                b, g, r = cv2.split(frame)
-                frame = cv2.merge([r, g, b])
-                video_data.append(frame)
-                rval, frame = cap.read()
-        cap.release()
-    except:
-        print('file {} error'.format(path))
-        raise ValueError
-    
-    intv = getattr(args, 'intv', 4)
-    total_frames = len(video_data)
-    frames = video_data[::intv]
-    processed_frames = processor(frames, return_tensors="pt")
-    return processed_frames, valid
 
 def generate_h5(processor, model, video_paths, args, h5_outfile):  # default-8
     """
@@ -106,14 +75,14 @@ def generate_h5(processor, model, video_paths, args, h5_outfile):  # default-8
                               _t['misc'].average_time * (dataset_size - i1) / 3600))
 
 
-
 def generate_h5_parallel(processor, model, video_paths, args, h5_outfile):
     if not os.path.exists('data/{}'.format(args.dataset)):
         os.makedirs('data/{}'.format(args.dataset))
-        
+    
     # move model to cuda, set it to eval mode
-    model.cuda()
     model.eval()
+    model.cuda()
+    model = torch.nn.DataParallel(model, device_ids=[0, 1, 2])
     
     # cpu video queue
     memory_video_queue = Queue(maxsize=8)
@@ -140,6 +109,7 @@ def generate_h5_parallel(processor, model, video_paths, args, h5_outfile):
     # let queue get filled
     time.sleep(8)
 
+    debug_counter = {'Failure': 0}
     with h5py.File(h5_outfile, 'w') as fd:    
         if args.sampling_strategy == 'uni':
             fd.create_dataset("sampled_frames", (len(video_paths), args.K, 3*224*224))
@@ -150,7 +120,8 @@ def generate_h5_parallel(processor, model, video_paths, args, h5_outfile):
             
             # extract special representative frames
             if args.sampling_strategy == 'repr':
-                exted_frms = sample_representative_frames(video_frms, model, args)
+                # FIXME: remove the counter
+                exted_frms = sample_representative_frames(video_frms, model, args.K, args.W, debug_counter)
             elif args.sampling_strategy == 'uni':
                 exted_frms = sample_frames_uniform(video_frms, K=args.K)
                 frms_to_store = exted_frms.reshape(args.K, -1).cpu()
@@ -166,10 +137,11 @@ def generate_h5_parallel(processor, model, video_paths, args, h5_outfile):
         except Empty:
             pass
     
+    # FIXME: remove this
+    print('Total Failure:%d'%debug_counter['Failure'])
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('--gpu_id', type=int, default=5, help='specify which gpu will be used')
     
     # dataset info-选定数据集
     parser.add_argument('--dataset', default='msvd_qa', choices=['msvd_qa', 'msrvtt-qa', 'svqa'], type=str)
@@ -179,22 +151,25 @@ if __name__ == '__main__':
     parser.add_argument('--out', dest='outfile', help='output filepath', default="{}_{}_feat.h5", type=str)
 
     # feature extraction hps
-    parser.add_argument('--chunk_size', type=int, default=128, help='chunk size for computing feature similarity')
+    parser.add_argument('--chunk_size', type=int, default=512, help='chunk size for computing feature similarity')
     parser.add_argument('--intv', type=int, default=1, help='sampling interval between video frames')
     parser.add_argument('--sampling_strategy', default='uni', choices=['uni', 'repr'], type=str)
     parser.add_argument('--K', type=int, default=16, help='number of frames to be sampled (esp. uniform sampling)')
+    parser.add_argument('--W', type=int, default=8, help='interval length to sample 2 points')
 
     # network params
-    parser.add_argument('--seed', default='666', type=int, help='random seed')
+    parser.add_argument('--vlm_model', type=str, default="openai/clip-vit-base-patch16")
+    parser.add_argument('--h5_fname', type=str, default="processed")
     args = parser.parse_args()
+    args.seed = 666
     args.feature_type = 'video'
 
     torch.manual_seed(args.seed)
     np.random.seed(args.seed)
 
     # initialize clip processors
-    processor = CLIPImageProcessor.from_pretrained("openai/clip-vit-base-patch32")
-    vision_model = CLIPVisionModel.from_pretrained("openai/clip-vit-base-patch32")
+    processor = CLIPImageProcessor.from_pretrained(args.vlm_model)
+    vision_model = CLIPVisionModel.from_pretrained(args.vlm_model)
     dataset_path = os.path.join(args.dataset_root, args.dataset)
 
     # annotation files
@@ -218,11 +193,11 @@ if __name__ == '__main__':
 
     if args.dataset == 'msvd_qa':
         args.annotation_file = os.path.join(dataset_path, 'annotations/qa_{}.json')
-        args.video_dir = os.path.join(dataset_path, 'YouTubeClips')
+        args.video_dir = os.path.join(dataset_path, 'video')
         video_paths = msvd_qa.load_video_paths(args)
         random.shuffle(video_paths)
         
-        outpath = os.path.join(dataset_path, 'processed')
+        outpath = os.path.join(dataset_path, args.h5_fname)
         if not os.path.exists(outpath):
             os.mkdir(outpath)
         h5_outfile = os.path.join(outpath, args.outfile.format(args.dataset, args.feature_type))
