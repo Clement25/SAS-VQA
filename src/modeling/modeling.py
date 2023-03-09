@@ -201,23 +201,36 @@ ClipBertForSequenceClassificationConfig = dict(
 )
 
 class CrossAttentionLayer(nn.Module):
-    def __init__(self, in_size, dropout, nhead, n_layer=1):
+    def __init__(self, in_size, dropout, nhead, n_layer=1, attn_type='dec-only'):
         super(CrossAttentionLayer, self).__init__()
-        self.attention = torch.nn.Transformer(
-            d_model=in_size,
-            nhead=nhead,
-            num_encoder_layers=1,
-            num_decoder_layers=1,
-            dropout=dropout,
-            dim_feedforward=4*in_size,
-            batch_first=True,
-            layer_norm_eps=1e-5,
-            activation=torch.nn.functional.gelu,
-        )
-        # self.attention = torch.nn.TransformerDecoder(decoder_layer=AttentionLayer, num_layers=n_layer)
+        self.attn_type = attn_type
+        if attn_type == 'enc-dec':
+            self.attention = torch.nn.Transformer(
+                d_model=in_size,
+                nhead=nhead,
+                num_encoder_layers=1,
+                num_decoder_layers=1,
+                dropout=dropout,
+                dim_feedforward=4*in_size,
+                batch_first=True,
+                activation=torch.nn.functional.gelu,
+            )
+        elif attn_type == 'dec-only':
+            dec_layer = torch.nn.TransformerDecoderLayer(
+                d_model=in_size,
+                nhead=nhead,
+                dim_feedforward=4*in_size,
+                batch_first=True,
+                activation=torch.nn.functional.relu
+            )
+            self.attention = torch.nn.TransformerDecoder(decoder_layer=dec_layer, num_layers=n_layer)
     
     def forward(self, txt_in, vis_in, txt_attn_mask=None):
-        return self.attention(vis_in, txt_in, tgt_key_padding_mask=~txt_attn_mask.bool())
+        if self.attn_type == 'enc-dec':
+            return self.attention(vis_in, txt_in, tgt_key_padding_mask=~txt_attn_mask.bool())
+        elif self.attn_type == 'dec-only':
+            # trg is the first param
+            return self.attention(txt_in, vis_in, tgt_key_padding_mask=~txt_attn_mask)
         
         
 class CLIPForSeqClassification(nn.Module):
