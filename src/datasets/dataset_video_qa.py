@@ -155,11 +155,13 @@ class VideoQADataset(BaseDataset):
 
 
 class VideoQACollator(object):
-    def __init__(self, tokenizer, max_length=20, task_type="action", n_options=5):
+    def __init__(self, tokenizer, max_length=20, task_type="action", n_options=5, nframe=4, samp_policy='random'):
         self.tokenizer = tokenizer
         self.max_length = max_length
         self.task_type = task_type
         self.n_options = n_options
+        self.nframe = nframe
+        self.samp_policy = samp_policy
 
     def collate_batch(self, batch):
         v_collate = default_collate
@@ -186,10 +188,20 @@ class VideoQACollator(object):
         # B, L, _ = visual_inputs.size()
         # visual_inputs = visual_inputs.reshape(B*L, 3, 224, 224)
         # video_lengths = [L] * B
-        # FIXME: try single picture 
-        inds = list(range(0,16,4))
-        visual_inputs = visual_inputs[:,inds]
+        bsz, orig_l, _ = visual_inputs.size()
+        if self.samp_policy == 'uniform':
+            T = orig_l // self.nframe + (1 if orig_l % self.nframe > 0 else 0)
+            inds = [int(i*self.nframe) for i in range(T)]
+            visual_inputs = visual_inputs[:,inds]
+        elif self.samp_policy == 'random':
+            rand_sample = torch.arange(orig_l).float().expand(bsz, -1)
+            inds = torch.multinomial(rand_sample, num_samples=self.nframe, replacement=False)
+            vinds = torch.arange(bsz).unsqueeze(-1).expand(bsz, inds.size(-1))
+            visual_inputs = visual_inputs[vinds,inds]
+        else:
+            raise ValueError("Sample strategy can only be chosen from ['uniform', 'random']")
         B, L, _ = visual_inputs.size()
+        # assert L == self.nframe
         visual_inputs = visual_inputs.reshape(B*L, 3, 224, 224)
         video_lengths = [L] * B
         

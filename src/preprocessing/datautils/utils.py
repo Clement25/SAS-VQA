@@ -26,17 +26,21 @@ def decode(seq_idx, idx_to_token, delim=None, stop_at_end=True):
     else:
         return delim.join(tokens)
 
-CHUNK_SIZE = 256
-def sample_representative_frames(frames, model, K=16, W=10, debug_counter=None):
+CHUNK_SIZE = 512
+def sample_representative_frames(frames, model, K=16, W=8, debug_counter=None):
     feat_chunks = []
     num_frames = frames.size(0)
-    num_chunks = num_frames // CHUNK_SIZE + 1
+    num_chunks = num_frames // CHUNK_SIZE + (1 if (num_frames % CHUNK_SIZE) > 0 else 0)
     
     for i in range(num_chunks):
         chunk_feats = model(frames[i*CHUNK_SIZE:(i+1)*CHUNK_SIZE]).pooler_output
         chunk_feats = chunk_feats.detach()
         chunk_feats = normalize(chunk_feats)
         feat_chunks.append(chunk_feats)
+    
+    if len(feat_chunks) == 0:   # empty input
+        debug_counter['Zeros'] += 1
+        return frames.new_zeros(K, 3, 224, 224)
 
     all_feats = torch.cat(feat_chunks, dim=0) # (N, 768)
     all_sims = all_feats @ all_feats.transpose(0, 1)  # (N, N)

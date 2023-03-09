@@ -151,7 +151,9 @@ def mk_tgif_qa_dataloader(task_type, anno_path, ans2label, img_hdf5_dir, cfg, to
         shuffle=is_train)
     vqa_collator = VideoQACollator(tokenizer=tokenizer,
                                    max_length=cfg.max_txt_len,
-                                   task_type=cfg.task)
+                                   task_type=cfg.task,
+                                   nframe=cfg.nframe,
+                                   samp_policy=cfg.samp_policy)
     dataloader = DataLoader(dataset,
                             batch_size=batch_size,
                             shuffle=False,

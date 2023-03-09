@@ -109,11 +109,10 @@ def generate_h5_parallel(processor, model, video_paths, args, h5_outfile):
     # let queue get filled
     time.sleep(8)
 
-    debug_counter = {'Failure': 0}
+    debug_counter = {'Failure': 0, 'Zeros': 0}
     with h5py.File(h5_outfile, 'w') as fd:    
-        if args.sampling_strategy == 'uni':
-            fd.create_dataset("sampled_frames", (len(video_paths), args.K, 3*224*224))
-            sampled_frames_h5 = fd["sampled_frames"]
+        fd.create_dataset("sampled_frames", (len(video_paths), args.K, 3*224*224))
+        sampled_frames_h5 = fd["sampled_frames"]
         for i in range(len(video_paths)):
             # read video frames out of the queue
             _, video_frms = cuda_video_queue.get(block=True)
@@ -122,6 +121,8 @@ def generate_h5_parallel(processor, model, video_paths, args, h5_outfile):
             if args.sampling_strategy == 'repr':
                 # FIXME: remove the counter
                 exted_frms = sample_representative_frames(video_frms, model, args.K, args.W, debug_counter)
+                frms_to_store = exted_frms.reshape(args.K, -1).cpu()
+                sampled_frames_h5[i] = frms_to_store
             elif args.sampling_strategy == 'uni':
                 exted_frms = sample_frames_uniform(video_frms, K=args.K)
                 frms_to_store = exted_frms.reshape(args.K, -1).cpu()
@@ -139,6 +140,7 @@ def generate_h5_parallel(processor, model, video_paths, args, h5_outfile):
     
     # FIXME: remove this
     print('Total Failure:%d'%debug_counter['Failure'])
+    print('Total Zeros:%d'%debug_counter['Zeros'])
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()

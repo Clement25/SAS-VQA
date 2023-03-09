@@ -182,8 +182,8 @@ class CLIPBaseModel(nn.Module):
         attention_mask: (B, Lt)  with 1 indicates valid, 0 indicates invalid position.
         """
         txt_out = self.txt_model(**txt_inputs)
-        vis_out = self.vis_modal(**vis_inputs) 
-        return dict(txt_out=txt_out, vis_out=vis_out)
+        vis_out = self.vis_modal(**vis_inputs)
+        return dict(txt_out=txt_out, vis_out=vis_out, txt_attn_mask=txt_inputs["attention_mask"])
 
 def instance_bce_with_logits(logits, labels, reduction="mean"):
     assert logits.dim() == 2
@@ -201,21 +201,23 @@ ClipBertForSequenceClassificationConfig = dict(
 )
 
 class CrossAttentionLayer(nn.Module):
-    def __init__(self, in_size, dropout, nhead):
+    def __init__(self, in_size, dropout, nhead, n_layer=1):
         super(CrossAttentionLayer, self).__init__()
-        AttentionLayer = torch.nn.TransformerDecoderLayer(
+        self.attention = torch.nn.Transformer(
             d_model=in_size,
             nhead=nhead,
+            num_encoder_layers=1,
+            num_decoder_layers=1,
             dropout=dropout,
             dim_feedforward=4*in_size,
             batch_first=True,
-            layer_norm_eps=1e-12,
+            layer_norm_eps=1e-5,
             activation=torch.nn.functional.gelu,
         )
-        self.attention = torch.nn.TransformerDecoder(decoder_layer=AttentionLayer, num_layers=1)
+        # self.attention = torch.nn.TransformerDecoder(decoder_layer=AttentionLayer, num_layers=n_layer)
     
-    def forward(self, txt_in, vis_in):
-        return self.attention(txt_in, vis_in)
+    def forward(self, txt_in, vis_in, txt_attn_mask=None):
+        return self.attention(vis_in, txt_in, tgt_key_padding_mask=~txt_attn_mask.bool())
         
         
 class CLIPForSeqClassification(nn.Module):
@@ -244,11 +246,13 @@ class CLIPForSeqClassification(nn.Module):
             vis_inputs=vis_inputs,
         )
         txt_output, vis_output = outputs['txt_out'], outputs['vis_out']
+        txt_attn_mask = outputs['txt_attn_mask']    # (B, L_t)
         vis_pooled_output = vis_output.image_embeds    # (\sum L_i, E)
         txt_pooled_output = txt_output.pooler_output    # (B, E_t)
 
         bsz, e_t = txt_pooled_output.size()
         decoded_tokens = txt_pooled_output.new_zeros(bsz, 1, e_t)
+        txt_attn_mask = torch.cat([txt_attn_mask.new_ones(bsz, 1), txt_attn_mask], dim=1)   # (B, L_t + 1)
 
         # for unequal numbers of video frames
         sample_vis_outputs = []
@@ -265,8 +269,8 @@ class CLIPForSeqClassification(nn.Module):
         txt_attn_in = torch.cat([decoded_tokens, txt_output.last_hidden_state], dim=1)
         vis_attn_in = sample_vis_outputs
         
-        attn_outputs = self.attention(txt_attn_in, vis_attn_in) # 
-        logits = self.classifier(attn_outputs)[:,0,:]
+        attn_outputs = self.attention(txt_attn_in, vis_attn_in, txt_attn_mask) # 
+        logits = self.classifier(attn_outputs)[:,0,:]   # (b, V)
         return logits
 
 
