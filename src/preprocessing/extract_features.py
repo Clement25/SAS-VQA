@@ -10,7 +10,7 @@ import random
 import numpy as np
 from datautils.utils import sample_representative_frames, sample_frames_uniform, Timer
 # from datautils import tgif_qa
-# from datautils import msrvtt_qa
+from datautils import msrvtt_qa
 from datautils import msvd_qa
 # from datautils import svqa
 from transformers import CLIPImageProcessor, CLIPVisionModel
@@ -74,15 +74,9 @@ def generate_h5(processor, model, video_paths, args, h5_outfile):  # default-8
                       .format(i1, dataset_size, _t['misc'].average_time,
                               _t['misc'].average_time * (dataset_size - i1) / 3600))
 
-
 def generate_h5_parallel(processor, model, video_paths, args, h5_outfile):
     if not os.path.exists('data/{}'.format(args.dataset)):
         os.makedirs('data/{}'.format(args.dataset))
-    
-    # move model to cuda, set it to eval mode
-    model.eval()
-    model.cuda()
-    model = torch.nn.DataParallel(model, device_ids=[0, 1, 2])
     
     # cpu video queue
     memory_video_queue = Queue(maxsize=8)
@@ -119,6 +113,10 @@ def generate_h5_parallel(processor, model, video_paths, args, h5_outfile):
             
             # extract special representative frames
             if args.sampling_strategy == 'repr':
+                # move model to cuda, set it to eval mode
+                model.eval()
+                model.cuda()
+                model = torch.nn.DataParallel(model, device_ids=[0, 1, 2])
                 # FIXME: remove the counter
                 exted_frms = sample_representative_frames(video_frms, model, args.K, args.W, debug_counter)
                 frms_to_store = exted_frms.reshape(args.K, -1).cpu()
@@ -146,7 +144,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     
     # dataset info-选定数据集
-    parser.add_argument('--dataset', default='msvd_qa', choices=['msvd_qa', 'msrvtt-qa', 'svqa'], type=str)
+    parser.add_argument('--dataset', default='msvd_qa', choices=['msvd_qa', 'msrvtt_qa', 'svqa'], type=str)
     parser.add_argument('--dataset_root', default='./dataset', type=str)
     parser.add_argument('--question_type', default='none', choices=['none'], type=str)
     # output
@@ -171,7 +169,10 @@ if __name__ == '__main__':
 
     # initialize clip processors
     processor = CLIPImageProcessor.from_pretrained(args.vlm_model)
-    vision_model = CLIPVisionModel.from_pretrained(args.vlm_model)
+    if args.sampling_strategy == 'repr':
+        vision_model = CLIPVisionModel.from_pretrained(args.vlm_model)
+    else:
+        vision_model = None
     dataset_path = os.path.join(args.dataset_root, args.dataset)
 
     # annotation files
@@ -184,14 +185,25 @@ if __name__ == '__main__':
         generate_h5(processor, video_paths, args.num_clips,
                     args.outfile.format(args.dataset, args.feature_type, str(args.num_clips)))
 
-    if args.dataset == 'msrvtt-qa':
-        args.annotation_file = './data/MSRVTT-QA/{}_qa.json'
-        args.video_dir = './data/MSRVTT-QA/video/'
+    if args.dataset == 'msrvtt_qa':
+        args.annotation_file = os.path.join(dataset_path, '{}_qa.json')
+        args.video_dir = os.path.join(dataset_path, 'video')
         video_paths = msrvtt_qa.load_video_paths(args)
         random.shuffle(video_paths)
+
         # load model
-        generate_h5(processor, video_paths, args.num_clips,
-                    args.outfile.format(args.dataset, args.feature_type, str(args.num_clips)))
+        outpath = os.path.join(dataset_path, args.h5_fname)
+        if not os.path.exists(outpath):
+            os.mkdir(outpath)
+        h5_outfile = os.path.join(outpath, args.outfile.format(args.dataset, args.feature_type))
+        json_outfile = os.path.join(outpath, 'vidmapping.json')
+        
+        # generate mapping dict
+        if not os.path.exists(json_outfile):
+            generate_vidid_json(video_paths, json_outfile)
+        # generate h5 file
+        # generate_h5_parallel(processor, vision_model, video_paths, args,
+        #             h5_outfile)
 
     if args.dataset == 'msvd_qa':
         args.annotation_file = os.path.join(dataset_path, 'annotations/qa_{}.json')
@@ -205,7 +217,6 @@ if __name__ == '__main__':
         h5_outfile = os.path.join(outpath, args.outfile.format(args.dataset, args.feature_type))
         json_outfile = os.path.join(outpath, 'vidmapping.json')
         
-        dataset = msvd_qa
         # generate mapping dict
         if not os.path.exists(outpath):
             generate_vidid_json(video_paths, outpath)

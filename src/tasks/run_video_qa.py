@@ -82,7 +82,23 @@ def mk_tgif_qa_dataloader(task_type, anno_path, ans2label, img_hdf5_dir, cfg, to
             )
             datalist.append(d)
         LOGGER.info(f"datalist {len(datalist)}")
+    elif task_type == 'msrvtt_qa':
+        raw_datalist = json.load(open(anno_path, 'r'))
+        LOGGER.info(f"Loaded data size {len(raw_datalist)}")
+        datalist = []
         
+        for qid, raw_d in enumerate(raw_datalist):
+            question = raw_d["question"]
+            answer_type = question.split()[0]
+            d = dict(
+                question=question,
+                answer=raw_d["answer"],
+                video_id='video' + str(raw_d["video_id"]), # <id>.avi -> ['<id>', 'avi]
+                answer_type=answer_type,
+                question_id=qid
+            )
+            datalist.append(d)
+        LOGGER.info(f"datalist {len(datalist)}")
     else:
         raw_datalist = load_jsonl(anno_path)
         LOGGER.info(f"Loaded data size {len(raw_datalist)}")
@@ -179,7 +195,7 @@ def build_common_answer_dict(anno_files, k=1500):
 
 def setup_dataloaders(cfg, tokenizer):
     LOGGER.info("Init. train_loader and val_loader...")
-    if cfg.task == 'msvd_qa':
+    if cfg.task in ['msvd_qa', 'msrvtt_qa']:
         # anno_files = (cfg.train_datasets[0].txt, cfg.val_datasets[0].txt)
         anno_files = (cfg.train_datasets[0].txt,)
         ans2label = build_common_answer_dict(anno_files, 1000)
@@ -398,7 +414,7 @@ def start_training(cfg):
                     device, n_gpu, hvd.rank(), bool(cfg.fp16)))
     
     # prepare data
-    if cfg.task == 'msvd_qa':
+    if cfg.task in ['msvd_qa', 'msrvtt_qa']:
         tokenizer = CLIPTokenizerFast.from_pretrained(cfg.model.clip_pretrained_model)
     else:
         tokenizer = BertTokenizerFast.from_pretrained(cfg.tokenizer_dir)

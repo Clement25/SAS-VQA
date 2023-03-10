@@ -201,7 +201,7 @@ ClipBertForSequenceClassificationConfig = dict(
 )
 
 class CrossAttentionLayer(nn.Module):
-    def __init__(self, in_size, dropout, nhead, n_layer=1, attn_type='dec-only'):
+    def __init__(self, in_size, dropout, nhead, n_layer=1, attn_type='dec-only', **kwargs):
         super(CrossAttentionLayer, self).__init__()
         self.attn_type = attn_type
         if attn_type == 'enc-dec':
@@ -215,7 +215,7 @@ class CrossAttentionLayer(nn.Module):
                 batch_first=True,
                 activation=torch.nn.functional.gelu,
             )
-        elif attn_type == 'dec-only':
+        elif attn_type in ['dec-only', 'dec-cas']:
             dec_layer = torch.nn.TransformerDecoderLayer(
                 d_model=in_size,
                 nhead=nhead,
@@ -231,6 +231,15 @@ class CrossAttentionLayer(nn.Module):
         elif self.attn_type == 'dec-only':
             # trg is the first param
             return self.attention(txt_in, vis_in, tgt_key_padding_mask=~txt_attn_mask)
+        elif self.attn_type == 'dec-cas':
+            T = vis_in.size(1)  # (B, L, E_v)
+            o = txt_in
+            for t in range(T):
+                o = self.attention(
+                    o, vis_in[:, t:t+1], 
+                    tgt_key_padding_mask=~txt_attn_mask
+                )
+            return o
         
         
 class CLIPForSeqClassification(nn.Module):
@@ -249,7 +258,7 @@ class CLIPForSeqClassification(nn.Module):
                 p.requires_grad = False
                 
         self.attention = CrossAttentionLayer(
-            in_size=config.txt_output_size, dropout=0.1, nhead=8 
+            in_size=config.txt_output_size, dropout=0.1, nhead=8, attn_type='dec-only'
         )
         self.classifier = nn.Linear(config.txt_output_size, config.num_labels)
 

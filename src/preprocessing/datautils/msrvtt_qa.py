@@ -5,24 +5,21 @@ from collections import Counter
 
 import pickle
 import numpy as np
+import os
 
 
 def load_video_paths(args):
     ''' Load a list of (path,image_id tuples).'''
     video_paths = []
+    video_ids = []
     modes = ['train', 'val', 'test']
     for mode in modes:
         with open(args.annotation_file.format(mode), 'r') as anno_file:
             instances = json.load(anno_file)
-        video_ids = [instance['video_id'] for instance in instances]
-        video_ids = set(video_ids)
-        if mode in ['train', 'val']:
-            for video_id in video_ids:
-                video_paths.append((args.video_dir + 'TrainValVideo/video{}.mp4'.format(video_id), video_id))
-        else:
-            for video_id in video_ids:
-                video_paths.append((args.video_dir + 'TestVideo/video{}.mp4'.format(video_id), video_id))
-
+        video_ids += [instance['video_id'] for instance in instances]
+    video_ids = set(video_ids)
+    for video_id in video_ids:
+        video_paths.append(os.path.join(args.video_dir, 'video{}.mp4'.format (video_id)))
     return video_paths
 
 
