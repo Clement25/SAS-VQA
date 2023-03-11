@@ -15,12 +15,12 @@
   ],
   "model": 
   {
-    "txt_output_size": 512,
-    "vis_output_size": 512,
+    "txt_output_size": 768,
+    "vis_output_size": 768,
     "num_labels": 1000,
     "hidden_dropout_prob": 0.1,
-    "clip_pretrained_model": "openai/clip-vit-base-patch16",
-    "freeze": true
+    "pretrained_model": "Salesforce/blip-image-captioning-base",
+    "freeze": false
   }
   ,
   "inference_txt_db": "/data/henry/msvd_qa/annotations/qa_test.json",

@@ -14,6 +14,8 @@ from datautils import msrvtt_qa
 from datautils import msvd_qa
 # from datautils import svqa
 from transformers import CLIPImageProcessor, CLIPVisionModel
+# from transformers import BLIPImageProcessor, BLIPVisionModel
+from transformers import AutoProcessor
 from prefetch_loader import *
 from queue import Queue, Empty, Full
 from threading import Thread
@@ -105,7 +107,7 @@ def generate_h5_parallel(processor, model, video_paths, args, h5_outfile):
 
     debug_counter = {'Failure': 0, 'Zeros': 0}
     with h5py.File(h5_outfile, 'w') as fd:    
-        fd.create_dataset("sampled_frames", (len(video_paths), args.K, 3*224*224))
+        fd.create_dataset("sampled_frames", (len(video_paths), args.K, 3 * 384 * 384))
         sampled_frames_h5 = fd["sampled_frames"]
         for i in range(len(video_paths)):
             # read video frames out of the queue
@@ -158,7 +160,7 @@ if __name__ == '__main__':
     parser.add_argument('--W', type=int, default=8, help='interval length to sample 2 points')
 
     # network params
-    parser.add_argument('--vlm_model', type=str, default="openai/clip-vit-base-patch16")
+    parser.add_argument('--vlm_model', type=str, default="Salesforce/blip-image-captioning-base")
     parser.add_argument('--h5_fname', type=str, default="processed")
     args = parser.parse_args()
     args.seed = 666
@@ -168,7 +170,8 @@ if __name__ == '__main__':
     np.random.seed(args.seed)
 
     # initialize clip processors
-    processor = CLIPImageProcessor.from_pretrained(args.vlm_model)
+    # processor = CLIPImageProcessor.from_pretrained(args.vlm_model)
+    processor = AutoProcessor.from_pretrained(args.vlm_model)
     if args.sampling_strategy == 'repr':
         vision_model = CLIPVisionModel.from_pretrained(args.vlm_model)
     else:
@@ -202,8 +205,8 @@ if __name__ == '__main__':
         if not os.path.exists(json_outfile):
             generate_vidid_json(video_paths, json_outfile)
         # generate h5 file
-        # generate_h5_parallel(processor, vision_model, video_paths, args,
-        #             h5_outfile)
+        generate_h5_parallel(processor, vision_model, video_paths, args,
+                    h5_outfile)
 
     if args.dataset == 'msvd_qa':
         args.annotation_file = os.path.join(dataset_path, 'annotations/qa_{}.json')

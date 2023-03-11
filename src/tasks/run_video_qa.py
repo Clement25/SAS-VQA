@@ -3,8 +3,7 @@ import os
 import time
 import random, math
 import json
-from transformers import BertTokenizerFast
-from transformers import CLIPTokenizerFast
+from transformers import AutoTokenizer
 
 import sys
 sys.path.append('..')
@@ -415,9 +414,9 @@ def start_training(cfg):
     
     # prepare data
     if cfg.task in ['msvd_qa', 'msrvtt_qa']:
-        tokenizer = CLIPTokenizerFast.from_pretrained(cfg.model.clip_pretrained_model)
+        tokenizer = AutoTokenizer.from_pretrained(cfg.model.pretrained_model)
     else:
-        tokenizer = BertTokenizerFast.from_pretrained(cfg.tokenizer_dir)
+        raise ValueError
     train_loader, val_loader, test_loader = setup_dataloaders(cfg, tokenizer)
 
     model = setup_model(cfg, device=device)
@@ -629,7 +628,7 @@ def start_inference(cfg):
     global_step = 0
     ans2label = build_common_answer_dict(anno_files=(cfg.train_datasets[0].txt, cfg.val_datasets[0].txt))
     # prepare data
-    tokenizer = CLIPTokenizerFast.from_pretrained(cfg.model.clip_pretrained_model)
+    tokenizer = AutoTokenizer.from_pretrained(cfg.model.pretrained_model)
     cfg.data_ratio = 1.
     val_loader = mk_tgif_qa_dataloader(
         task_type=cfg.task,

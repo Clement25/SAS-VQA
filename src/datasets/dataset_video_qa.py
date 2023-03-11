@@ -202,7 +202,7 @@ class VideoQACollator(object):
             raise ValueError("Sample strategy can only be chosen from ['uniform', 'random']")
         B, L, _ = visual_inputs.size()
         # assert L == self.nframe
-        visual_inputs = visual_inputs.reshape(B*L, 3, 224, 224)
+        visual_inputs = visual_inputs.reshape(B*L, 3, 384, 384)
         video_lengths = [L] * B
         
         video_start_end = [0]

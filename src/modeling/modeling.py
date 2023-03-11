@@ -6,7 +6,8 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 
-from transformers import CLIPVisionModel, CLIPTextModel, CLIPVisionModelWithProjection
+from transformers import CLIPTextModel, CLIPVisionModelWithProjection
+from transformers import BlipForQuestionAnswering
 from apex.normalization.fused_layer_norm import FusedLayerNorm as LayerNorm
 
 
@@ -185,6 +186,42 @@ class CLIPBaseModel(nn.Module):
         vis_out = self.vis_modal(**vis_inputs)
         return dict(txt_out=txt_out, vis_out=vis_out, txt_attn_mask=txt_inputs["attention_mask"])
 
+class BLIPBaseModel(nn.Module):
+    """
+
+    The model can behave as an encoder (with only self-attention) as well
+    as a decoder, in which case a layer of cross-attention is added between
+    the self-attention layers, following the architecture described in `Attention is all you need`_ by Ashish Vaswani,
+    Noam Shazeer, Niki Parmar, Jakob Uszkoreit, Llion Jones, Aidan N. Gomez, Lukasz Kaiser and Illia Polosukhin.
+
+    To behave as an decoder the model needs to be initialized with the
+    :obj:`is_decoder` argument of the configuration set to :obj:`True`; an
+    :obj:`encoder_hidden_states` is expected as an input to the forward pass.
+
+    .. _`Attention is all you need`:
+        https://arxiv.org/abs/1706.03762
+
+    config keys:
+        clip_config: str, text model name, default "openai/clip-vit-base-path-32"
+    """
+    def __init__(self, config):
+        super().__init__()
+        self.config = config
+        # self.txt_model = BlipTextModel.from_pretrained(config.pretrained_model)
+        # self.vis_model = BlipVisionModel.from_pretrained(config.pretrained_model)
+        self.model = BlipForQuestionAnswering.from_pretrained(config.pretrained_model)
+
+    def forward(self, txt_inputs, vis_inputs):
+        r"""Modified from BertModel
+        text_input_ids: (B, Lt)
+        visual_inputs: (B * #frame, C, H, W)
+        attention_mask: (B, Lt)  with 1 indicates valid, 0 indicates invalid position.
+        """
+        # txt_out = self.txt_model(**txt_inputs)
+        # vis_out = self.vis_model(**vis_inputs)
+        output = self.model(**txt_inputs, **vis_inputs)
+        return dict(txt_out=txt_out, vis_out=vis_out, txt_attn_mask=txt_inputs["attention_mask"])
+
 def instance_bce_with_logits(logits, labels, reduction="mean"):
     assert logits.dim() == 2
     loss = F.binary_cross_entropy_with_logits(
@@ -250,11 +287,15 @@ class CLIPForSeqClassification(nn.Module):
         super(CLIPForSeqClassification, self).__init__()
         self.config = config
 
-        self.clip = CLIPBaseModel(config)
+        if 'clip' in config.pretrained_model.lower():
+            self.model = CLIPBaseModel(config)
+        elif 'blip' in config.pretrained_model.lower():
+            self.model = BLIPBaseModel(config)
+
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
 
         if config.freeze:
-            for p in self.clip.parameters():
+            for p in self.model.parameters():
                 p.requires_grad = False
                 
         self.attention = CrossAttentionLayer(
@@ -263,13 +304,13 @@ class CLIPForSeqClassification(nn.Module):
         self.classifier = nn.Linear(config.txt_output_size, config.num_labels)
 
     def forward(self, txt_inputs, vis_inputs, video_start_end, repeat_counts=None):
-        outputs = self.clip(
+        outputs = self.model(
             txt_inputs=txt_inputs,
             vis_inputs=vis_inputs,
         )
         txt_output, vis_output = outputs['txt_out'], outputs['vis_out']
         txt_attn_mask = outputs['txt_attn_mask']    # (B, L_t)
-        vis_pooled_output = vis_output.image_embeds    # (\sum L_i, E)
+        vis_pooled_output = vis_output.pooler_output    # (\sum L_i, E)
         txt_pooled_output = txt_output.pooler_output    # (B, E_t)
 
         bsz, e_t = txt_pooled_output.size()
@@ -432,61 +473,3 @@ class MLP(nn.Module):
         return self.classifier(hidden_states)
 
 
-class ClipBertForVideoTextRetrieval(nn.Module):
-    """
-    Modified from BertForSequenceClassification to support oscar training.
-    """
-    def __init__(self, config):
-        super(ClipBertForVideoTextRetrieval, self).__init__(config)
-        self.config = config
-
-        self.bert = ClipBertBaseModel(config)
-        self.dropout = nn.Dropout(config.hidden_dropout_prob)
-
-        self.classifier = nn.Sequential(
-            nn.Linear(config.hidden_size,
-                      config.hidden_size * 2),
-            nn.ReLU(True),
-            nn.Linear(config.hidden_size * 2, config.num_labels)
-        )
-        self.margin = config.margin
-        self.init_weights()
-
-    def forward(self, text_input_ids, visual_inputs,
-                text_input_mask, labels=None, sample_size=-1):
-        outputs = self.bert(
-            text_input_ids=text_input_ids,
-            visual_inputs=visual_inputs,
-            attention_mask=text_input_mask,  # (B, Lt) note this mask is text only!!!
-        )
-        pooled_output = outputs[1]
-
-        pooled_output = self.dropout(pooled_output)
-        logits = self.classifier(pooled_output)  # rank (B, 1) or ce (B, 2)
-        logits, loss = self.calc_loss(logits, labels, sample_size=sample_size)
-        return dict(
-            logits=logits,
-            loss=loss
-        )
-
-    def calc_loss(self, logits, labels, sample_size=-1):
-        if labels is not None:
-            if self.config.loss_type == "ce":
-                loss_fct = CrossEntropyLoss(reduction="none")
-                loss = loss_fct(
-                    logits.view(-1, self.config.num_labels),
-                    labels.view(-1))
-            elif self.config.loss_type == "rank":
-                # triplet loss
-                rank_scores_sigmoid = torch.sigmoid(logits).squeeze()  # (B * (#pos=1 + #neg), )
-                assert sample_size > 0  # video batch size
-                # wrong! scores = rank_scores_sigmoid.contiguous().view(-1, sample_size)
-                scores = rank_scores_sigmoid.contiguous().view(sample_size, -1)
-                pos = scores[:, :1]  # (B, #pos=1)
-                neg = scores[:, 1:]  # (B, #neg)
-                loss = torch.clamp(self.margin + neg - pos, min=0)
-            else:
-                raise ValueError("Invalid option for config.loss_type")
-        else:
-            loss = 0
-        return logits, loss
