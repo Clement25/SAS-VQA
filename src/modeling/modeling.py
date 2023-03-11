@@ -287,14 +287,14 @@ class CLIPForSeqClassification(nn.Module):
         self.config = config
 
         if 'clip' in config.pretrained_model.lower():
-            self.model = CLIPBaseModel(config)
-        elif 'blip' in config.pretrained_model.lower():
-            self.model = BLIPBaseModel(config)
+            self.clip = CLIPBaseModel(config)
+        # elif 'blip' in config.pretrained_model.lower():
+            # self.vlm = BLIPBaseModel(config)
 
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
 
         if config.freeze:
-            for p in self.model.parameters():
+            for p in self.clip.parameters():
                 p.requires_grad = False
                 
         self.attention = CrossAttentionLayer(
@@ -303,7 +303,7 @@ class CLIPForSeqClassification(nn.Module):
         self.classifier = nn.Linear(config.txt_output_size, config.num_labels)
 
     def forward(self, txt_inputs, vis_inputs, video_start_end, repeat_counts=None):
-        outputs = self.model(
+        outputs = self.clip(
             txt_inputs=txt_inputs,
             vis_inputs=vis_inputs,
         )

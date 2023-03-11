@@ -509,6 +509,10 @@ def start_training(cfg):
         
         loss = outputs["loss"].mean()
         running_loss(loss.item())
+        logits = outputs["logits"]
+        preds = logits.argmax(dim=-1)
+        total_correct += (preds == batch["labels"]).sum()
+        total_preds += len(preds)
         # backward pass
         delay_unscale = (step + 1) % cfg.gradient_accumulation_steps != 0
         with amp.scale_loss(
@@ -520,6 +524,8 @@ def start_training(cfg):
 
         # optimizer
         if (step + 1) % cfg.gradient_accumulation_steps == 0:
+            acc = total_correct / total_preds
+            pbar.set_description(str(running_loss)+' acc: {:2.3f}'.format(acc * 100))
             global_step += 1
             # learning rate scheduling
             n_epoch = int(1. * total_train_batch_size * global_step
@@ -570,6 +576,7 @@ def start_training(cfg):
 
             # checkpoint
             if global_step % cfg.valid_steps == 0:
+                total_correct = total_preds = 0
                 LOGGER.info(f'Step {global_step}: start validation')
                 validate(model, val_loader, cfg, global_step)
                 model_saver.save(step=global_step, model=model)
