@@ -16,23 +16,30 @@ class CLIPModelforFinetune(nn.Module):
     def forward(self, batch):
         # used to make visual feature copies
         repeat_counts = batch["n_examples_list"]
-
-        # vis_inputs = {'pixel_values': repeat_tensor_rows(visual_features, repeat_counts)}
-        vis_inputs = {'pixel_values': batch['visual_inputs']}
-        
-        txt_inputs = {'input_ids': batch['text_input_ids'], \
-                        'attention_mask': batch['text_attention_mask']}
-        
         # obtain outputs
-        logits = self.VLModel(
+        if 'clip' in self.config.pretrained_model:
+            vis_inputs = {'pixel_values': batch['visual_inputs']}
+            
+            txt_inputs = {'input_ids': batch['text_input_ids'], \
+                            'attention_mask': batch['text_attention_mask']}
+            logits, loss = self.VLModel(
                                 txt_inputs=txt_inputs,
                                 vis_inputs=vis_inputs,
                                 video_start_end=batch['video_start_end'],
                                 repeat_counts = None if all(rc == 1 for rc in repeat_counts) else repeat_counts
                             )
-        
-        logits, loss = self.calc_loss(logits, batch['labels'])
-        return dict(logits=logits, loss=loss)
+            logits, loss = self.calc_loss(logits, batch['labels'])
+            return dict(logits=logits, loss=loss)
+
+        elif 'blip' in self.config.pretrained_model:
+            inputs = {
+                'pixel_values': batch['visual_inputs'],
+                'input_ids': batch['text_input_ids'],
+                'attention_mask': batch['text_attention_mask'],
+                'labels': batch['labels']
+            }
+            loss = self.VLModel(inputs)
+            return loss
 
     def load_separate_ckpt(self, cnn_weights_path=None, bert_weights_path=None):
         if cnn_weights_path:

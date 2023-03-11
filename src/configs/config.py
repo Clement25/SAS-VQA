@@ -363,7 +363,7 @@ class SharedConfigs(object):
             args.num_labels = max(num_answers, 1540)
             args.loss_type = "ce"
         elif args.task == "msrvtt_qa":
-            args.num_labels = max(num_answers, 1500)
+            args.num_labels = max(num_answers, 1000)
             args.loss_type = "ce"
         elif args.task == "msvd_qa":
             args.num_labels = max(num_answers, 1000)

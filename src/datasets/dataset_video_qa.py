@@ -185,9 +185,6 @@ class VideoQACollator(object):
         text_input_ids = batch_enc.input_ids  # (B, L)
         text_attention_mask = batch_enc.attention_mask  # (B, L)
         
-        # B, L, _ = visual_inputs.size()
-        # visual_inputs = visual_inputs.reshape(B*L, 3, 224, 224)
-        # video_lengths = [L] * B
         bsz, orig_l, _ = visual_inputs.size()
         if self.samp_policy == 'uniform':
             T = orig_l // self.nframe + (1 if orig_l % self.nframe > 0 else 0)
@@ -200,6 +197,78 @@ class VideoQACollator(object):
             visual_inputs = visual_inputs[vinds,inds]
         else:
             raise ValueError("Sample strategy can only be chosen from ['uniform', 'random']")
+        B, L, _ = visual_inputs.size()
+        # assert L == self.nframe
+        visual_inputs = visual_inputs.reshape(B*L, 3, 224, 224)
+        video_lengths = [L] * B
+        
+        video_start_end = [0]
+        for l in video_lengths:
+            video_start_end.append(video_start_end[-1] + l)
+
+        labels = default_collate([int(d["label"]) for d in text_examples]) \
+            if text_examples[0]["label"] is not None else None  # (B, #ans)
+        question_ids = [d["question_id"] for d in text_examples]
+        
+        return dict(
+            visual_inputs=visual_inputs,  # (B * #frm, C, H, W)
+            text_input_ids=text_input_ids,
+            text_attention_mask=text_attention_mask,
+            question_ids=question_ids,
+            video_start_end=video_start_end,
+            labels=labels,
+            n_examples_list=n_examples_list  # used to create image feature copies.
+        )
+
+class BLIPVideoQACollator(object):
+    def __init__(self, processor, max_length=20, task_type="action", n_options=5, nframe=4, samp_policy='random'):
+        self.processor = processor
+        self.max_length = max_length
+        self.task_type = task_type
+        self.n_options = n_options
+        self.nframe = nframe
+        self.samp_policy = samp_policy
+
+    def collate_batch(self, batch):
+        v_collate = default_collate
+        visual_inputs = v_collate([d["vid"] for d in batch])  # (B, T, 3, H, W)
+        # group data
+        text_examples = flat_list_of_lists([d["examples"] for d in batch])
+        n_examples_list = [d["n_examples"] for d in batch]  # (B, )
+        # group elements data
+        # directly concatenate question and option as a single seq.
+        if self.task_type in ["action", "transition"]:
+            text_str_list = flat_list_of_lists(
+                [[d["q_str"] + " " + d["options_str_list"][i] for i in range(self.n_options)]
+                 for d in text_examples]
+            )  # (B * n_options, )
+        else:
+            text_str_list = [d["q_str"] for d in text_examples]  # (B, )
+            
+        
+        bsz, orig_l, _ = visual_inputs.size()
+        if self.samp_policy == 'uniform':
+            T = orig_l // self.nframe + (1 if orig_l % self.nframe > 0 else 0)
+            inds = [int(i*self.nframe) for i in range(T)]
+            visual_inputs = visual_inputs[:,inds]
+        elif self.samp_policy == 'random':
+            rand_sample = torch.arange(orig_l).float().expand(bsz, -1)
+            inds = torch.multinomial(rand_sample, num_samples=self.nframe, replacement=False)
+            vinds = torch.arange(bsz).unsqueeze(-1).expand(bsz, inds.size(-1))
+            visual_inputs = visual_inputs[vinds,inds]
+        elif self.samp_policy == 'single':
+            visual_inputs = visual_inputs[:,orig_l // 2]
+        else:
+            raise ValueError("Sample strategy can only be chosen from ['uniform', 'random']")
+        
+        # FIXME: only impl single here
+        batch_enc = self.processor(text=text_str_list, padding = True, 
+                                   truncation = True, return_tensors='pt')
+        text_input_ids = batch_enc.input_ids  # (B, L)
+        text_attention_mask = batch_enc.attention_mask  # (B, L)
+        
+        labels = self.processor(text=batch['label'], return_tensors='pt')
+
         B, L, _ = visual_inputs.size()
         # assert L == self.nframe
         visual_inputs = visual_inputs.reshape(B*L, 3, 384, 384)

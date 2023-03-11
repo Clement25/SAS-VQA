@@ -173,8 +173,8 @@ class CLIPBaseModel(nn.Module):
     def __init__(self, config):
         super().__init__()
         self.config = config
-        self.txt_model = CLIPTextModel.from_pretrained(config.clip_pretrained_model)
-        self.vis_modal = CLIPVisionModelWithProjection.from_pretrained(config.clip_pretrained_model)
+        self.txt_model = CLIPTextModel.from_pretrained(config.pretrained_model)
+        self.vis_modal = CLIPVisionModelWithProjection.from_pretrained(config.pretrained_model)
 
     def forward(self, txt_inputs, vis_inputs):
         r"""Modified from BertModel
@@ -207,20 +207,19 @@ class BLIPBaseModel(nn.Module):
     def __init__(self, config):
         super().__init__()
         self.config = config
-        # self.txt_model = BlipTextModel.from_pretrained(config.pretrained_model)
-        # self.vis_model = BlipVisionModel.from_pretrained(config.pretrained_model)
         self.model = BlipForQuestionAnswering.from_pretrained(config.pretrained_model)
 
-    def forward(self, txt_inputs, vis_inputs):
+    def forward(self, inputs):
         r"""Modified from BertModel
         text_input_ids: (B, Lt)
         visual_inputs: (B * #frame, C, H, W)
         attention_mask: (B, Lt)  with 1 indicates valid, 0 indicates invalid position.
         """
-        # txt_out = self.txt_model(**txt_inputs)
-        # vis_out = self.vis_model(**vis_inputs)
-        output = self.model(**txt_inputs, **vis_inputs)
-        return dict(txt_out=txt_out, vis_out=vis_out, txt_attn_mask=txt_inputs["attention_mask"])
+        if self.training:
+            outputs = self.model(**inputs) 
+        else:
+            outputs = self.generate(**inputs)
+        return outputs.loss
 
 def instance_bce_with_logits(logits, labels, reduction="mean"):
     assert logits.dim() == 2
@@ -310,7 +309,7 @@ class CLIPForSeqClassification(nn.Module):
         )
         txt_output, vis_output = outputs['txt_out'], outputs['vis_out']
         txt_attn_mask = outputs['txt_attn_mask']    # (B, L_t)
-        vis_pooled_output = vis_output.pooler_output    # (\sum L_i, E)
+        vis_pooled_output = vis_output.image_embeds    # (\sum L_i, E)
         txt_pooled_output = txt_output.pooler_output    # (B, E_t)
 
         bsz, e_t = txt_pooled_output.size()
@@ -334,130 +333,9 @@ class CLIPForSeqClassification(nn.Module):
         
         attn_outputs = self.attention(txt_attn_in, vis_attn_in, txt_attn_mask) # 
         logits = self.classifier(attn_outputs)[:,0,:]   # (b, V)
-        return logits
+        return logits, None
 
 
-class ClipBertForMultipleChoice(nn.Module):
-    def __init__(self, config):
-        super(ClipBertForMultipleChoice, self).__init__(config)
-        self.config = config
-
-        self.bert = ClipBertBaseModel(config)
-        self.dropout = nn.Dropout(config.hidden_dropout_prob)
-
-        self.classifier = nn.Sequential(
-            nn.Linear(config.hidden_size,
-                      config.hidden_size * 2),
-            nn.ReLU(True),
-            nn.Linear(config.hidden_size * 2, 1)
-        )
-        self.init_weights()
-
-    def forward(self, text_input_ids, visual_inputs,
-                text_input_mask, labels=None):
-        """
-        Args:
-            text_input_ids: (B * num_labels, Lt)
-            visual_inputs: (B, Lv, d)
-            text_input_mask: (B * num_labels, Lt)
-            labels: (B, ), in [0, num_labels-1]
-
-        Returns:
-
-        """
-        outputs = self.bert(
-            text_input_ids=text_input_ids,
-            visual_inputs=visual_inputs,
-            attention_mask=text_input_mask,  # (B, Lt) note this mask is text only!!!
-        )
-        pooled_output = outputs[1]
-
-        pooled_output = self.dropout(pooled_output)
-        logits = self.classifier(pooled_output)
-        logits, loss = self.calc_loss(logits, labels)
-        return dict(
-            logits=logits,
-            loss=loss
-        )
-
-    def calc_loss(self, logits, labels):
-        if self.config.loss_type == "ce":  # cross_entropy [GQA, Retrieval, Captioning]
-            logits = logits.view(-1, self.config.num_labels)
-
-        if labels is not None:
-            if self.config.num_labels == 1:  # regression
-                loss_fct = MSELoss(reduction="none")
-                # labels = labels.to(torch.float)
-                loss = loss_fct(logits.view(-1), labels.view(-1))
-            else:
-                if self.config.loss_type == 'bce':  # [VQA]
-                    loss = instance_bce_with_logits(
-                        logits, labels, reduction="none")
-                elif self.config.loss_type == "ce":  # cross_entropy [GQA, Retrieval, Captioning]
-                    loss_fct = CrossEntropyLoss(reduction="none")
-                    # logits = logits.view(-1, self.config.num_labels)
-                    loss = loss_fct(logits, labels.view(-1))
-                else:
-                    raise ValueError("Invalid option for config.loss_type")
-        else:
-            loss = 0
-        return logits, loss
-
-
-class ClipBertForRegression(nn.Module):
-    def __init__(self, config):
-        super(ClipBertForRegression, self).__init__(config)
-        self.config = config
-
-        self.bert = ClipBertBaseModel(config)
-        self.dropout = nn.Dropout(config.hidden_dropout_prob)
-
-        self.regressor = nn.Sequential(
-            nn.Linear(config.hidden_size, config.hidden_size),
-            nn.ELU(),
-            nn.BatchNorm1d(config.hidden_size),
-            nn.Dropout(config.hidden_dropout_prob),
-            nn.Linear(config.hidden_size, 1))
-
-        self.init_weights()
-
-    def forward(self, text_input_ids, visual_inputs,
-                text_input_mask, labels=None):
-        """
-        Args:
-            text_input_ids: (B * num_labels, Lt)
-            visual_inputs: (B, Lv, d)
-            text_input_mask: (B * num_labels, Lt)
-            labels: (B, ), in [0, num_labels-1]
-
-        Returns:
-
-        """
-        outputs = self.bert(
-            text_input_ids=text_input_ids,
-            visual_inputs=visual_inputs,
-            attention_mask=text_input_mask,  # (B, Lt) note this mask is text only!!!
-        )
-        pooled_output = outputs[1]
-
-        pooled_output = self.dropout(pooled_output)
-        logits = self.regressor(pooled_output)
-        logits, loss = self.calc_loss(logits, labels)
-        return dict(
-            logits=logits,
-            loss=loss
-        )
-
-    def calc_loss(self, logits, labels):
-        if labels is not None:
-            if self.config.loss_type == "mse":  # regression
-                loss_fct = MSELoss(reduction="none")
-                loss = loss_fct(logits.view(-1), labels.view(-1))
-            else:
-                raise ValueError(f"Invalid option {self.config.loss_type} for config.loss_type")
-        else:
-            loss = 0
-        return logits, loss
 
 
 class MLP(nn.Module):

@@ -3,13 +3,13 @@ import os
 import time
 import random, math
 import json
-from transformers import AutoTokenizer
+from transformers import AutoTokenizer, AutoProcessor
 
 import sys
 sys.path.append('..')
+from src.modeling.modeling import CLIPForSeqClassification, BLIPBaseModel
 from src.modeling.clip_model import CLIPModelforFinetune
-from src.modeling.modeling import CLIPForSeqClassification
-from src.datasets.dataset_video_qa import VideoQADataset, VideoQACollator
+from src.datasets.dataset_video_qa import VideoQADataset, VideoQACollator, BLIPVideoQACollator
 from src.datasets.dataloader import InfiniteIterator, PrefetchLoader
 from src.datasets.data_utils import ImageNorm, mk_input_group
 from torch.utils.data import DataLoader
@@ -138,7 +138,7 @@ def mk_tgif_qa_dataloader(task_type, anno_path, ans2label, img_hdf5_dir, cfg, to
         is_train=is_train
     )
     LOGGER.info(f"group_datalist {len(group_datalist)}")
-
+    
     vidmapping = load_json(cfg.vid_mapping)
     dataset = VideoQADataset(
         task_type=cfg.task,
@@ -164,11 +164,19 @@ def mk_tgif_qa_dataloader(task_type, anno_path, ans2label, img_hdf5_dir, cfg, to
     sampler = DistributedSampler(
         dataset, num_replicas=hvd.size(), rank=hvd.rank(),
         shuffle=is_train)
-    vqa_collator = VideoQACollator(tokenizer=tokenizer,
-                                   max_length=cfg.max_txt_len,
-                                   task_type=cfg.task,
-                                   nframe=cfg.nframe,
-                                   samp_policy=cfg.samp_policy)
+    
+    if 'clip' in cfg.model.pretrained_model.lower():
+        vqa_collator = VideoQACollator(tokenizer=tokenizer,
+                                    max_length=cfg.max_txt_len,
+                                    task_type=cfg.task,
+                                    nframe=cfg.nframe,
+                                    samp_policy=cfg.samp_policy)
+    elif 'blip' in cfg.model.pretrained_model.lower():
+        vqa_collator = BLIPVideoQACollator(tokenizer=tokenizer,
+                                    max_length=cfg.max_txt_len,
+                                    task_type=cfg.task,
+                                    nframe=cfg.nframe,
+                                    samp_policy=cfg.samp_policy)
     dataloader = DataLoader(dataset,
                             batch_size=batch_size,
                             shuffle=False,
@@ -236,10 +244,10 @@ def setup_model(cfg, device=None):
     ]
     for k in add_attr_list:
         setattr(cfg.model, k, cfg[k])
-    if cfg.task in ["action", "transition"]:
-        vlm_model_cls = ClipBertForMultipleChoice
-    else:
+    if 'clip' in cfg.model.pretrained_model.lower():
         vlm_model_cls = CLIPForSeqClassification
+    elif 'blip' in cfg.model.pretrained_model.lower():
+        vim_model_cls = BLIPBaseModel
 
     # we separate the CNN and the transformer in order to use different optimizer for each
     # transformer still has a CNN layer inside, used to down sample grid.
@@ -249,7 +257,6 @@ def setup_model(cfg, device=None):
         vlm_cls=vlm_model_cls
     )
     model.to(device)
-
     LOGGER.info("Setup model done!")
     return model
 
@@ -414,7 +421,10 @@ def start_training(cfg):
     
     # prepare data
     if cfg.task in ['msvd_qa', 'msrvtt_qa']:
-        tokenizer = AutoTokenizer.from_pretrained(cfg.model.pretrained_model)
+        if 'clip' in cfg.model.pretrained_model.lower():
+            tokenizer = AutoTokenizer.from_pretrained(cfg.model.pretrained_model)
+        elif 'blip' in cfg.model.pretrained_model.lower():
+            tokenizer = AutoProcessor.from_pretrained(cfg.model.pretrained_model)
     else:
         raise ValueError
     train_loader, val_loader, test_loader = setup_dataloaders(cfg, tokenizer)
@@ -457,9 +467,6 @@ def start_training(cfg):
     TB_LOGGER.global_step = global_step
         
     if hvd.rank() == 0:
-        # LOGGER.info("Saving training meta...")
-        # save_training_meta(cfg)
-        # LOGGER.info("Saving training done...")
         TB_LOGGER.create(join(cfg.output_dir, 'log'))
         pbar = tqdm(total=cfg.num_train_steps)
         model_saver = ModelSaver(join(cfg.output_dir, "ckpt"))
@@ -500,11 +507,6 @@ def start_training(cfg):
         del batch["question_ids"]
         outputs = forward_step(model, batch, cfg)
         
-        logits = outputs["logits"]
-        preds = logits.argmax(dim=-1)
-        total_correct += (preds == batch["labels"]).sum()
-        total_preds += len(preds)
-        
         loss = outputs["loss"].mean()
         running_loss(loss.item())
         # backward pass
@@ -518,8 +520,6 @@ def start_training(cfg):
 
         # optimizer
         if (step + 1) % cfg.gradient_accumulation_steps == 0:
-            acc = total_correct / total_preds
-            pbar.set_description(str(running_loss)+' acc: {:2.3f}'.format(acc * 100))
             global_step += 1
             # learning rate scheduling
             n_epoch = int(1. * total_train_batch_size * global_step
@@ -573,7 +573,7 @@ def start_training(cfg):
                 LOGGER.info(f'Step {global_step}: start validation')
                 validate(model, val_loader, cfg, global_step)
                 model_saver.save(step=global_step, model=model)
-                total_correct = total_preds = 0
+                # total_correct = total_preds = 0
                 validate(model, test_loader, cfg, global_step)
                 
         if global_step >= cfg.num_train_steps:
@@ -689,7 +689,6 @@ def start_inference(cfg):
             qa_results,
             join(inference_res_dir, f"results_all.json"))
         LOGGER.info(f'all results written')
-
 
 if __name__ == '__main__':
     # Initialize Horovod
