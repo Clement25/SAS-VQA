@@ -41,10 +41,6 @@ class CLIPModelforFinetune(nn.Module):
             loss = self.VLModel(inputs)
             return loss
 
-    def load_separate_ckpt(self, cnn_weights_path=None, bert_weights_path=None):
-        if cnn_weights_path:
-            self.cnn.load_state_dict(cnn_weights_path)
-
     def calc_loss(self, logits, labels):
         if labels is not None:
             if self.config.num_labels == 1:  # regression

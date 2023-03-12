@@ -32,9 +32,7 @@ def get_random_sample_indices(
         sample_indices = np.sort(sample_indices)
     return torch.from_numpy(sample_indices).long().to(device)
 
-
 BertLayerNorm = LayerNorm
-
 
 class VisualInputEmbedding(nn.Module):
     """
@@ -292,10 +290,6 @@ class CLIPForSeqClassification(nn.Module):
             # self.vlm = BLIPBaseModel(config)
 
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
-
-        if config.freeze:
-            for p in self.clip.parameters():
-                p.requires_grad = False
                 
         self.attention = CrossAttentionLayer(
             in_size=config.txt_output_size, dropout=0.1, nhead=8, attn_type='dec-only'
@@ -335,19 +329,5 @@ class CLIPForSeqClassification(nn.Module):
         logits = self.classifier(attn_outputs)[:,0,:]   # (b, V)
         return logits, None
 
-
-
-
-class MLP(nn.Module):
-    def __init__(self, input_size, hidden_size, output_size):
-        super(MLP, self).__init__()
-        self.classifier = nn.Sequential(
-            nn.Linear(input_size, hidden_size),
-            nn.ReLU(True),
-            nn.Linear(hidden_size, output_size)
-        )
-
-    def forward(self, hidden_states):
-        return self.classifier(hidden_states)
 
 
