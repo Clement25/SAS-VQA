@@ -204,7 +204,7 @@ class BLIPBaseModel(nn.Module):
     def __init__(self, config):
         super().__init__()
         self.config = config
-        self.model = BlipForQuestionAnswering.from_pretrained(config.pretrained_model)
+        self.blip = BlipForQuestionAnswering.from_pretrained(config.pretrained_model)
 
     def forward(self, inputs):
         r"""Modified from BertModel
@@ -213,9 +213,11 @@ class BLIPBaseModel(nn.Module):
         attention_mask: (B, Lt)  with 1 indicates valid, 0 indicates invalid position.
         """
         if self.training:
-            outputs = self.model(**inputs) 
+            inputs['labels'] = inputs['labels'][...,1:] # shift left
+            inputs['decoder_attention_mask'] = inputs['decoder_attention_mask'][...,1:]
+            outputs = self.blip(**inputs)
         else:
-            outputs = self.model.generate(**inputs)
+            outputs = self.blip.generate(**inputs)
         return outputs
 
 def instance_bce_with_logits(logits, labels, reduction="mean"):

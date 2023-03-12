@@ -298,5 +298,6 @@ class BLIPVideoQACollator(BaseQACollator):
             question_ids=question_ids,
             video_start_end=video_start_end,
             labels=labels.input_ids if labels is not None else None,
+            decoder_attention_mask=labels.attention_mask,
             n_examples_list=n_examples_list  # used to create image feature copies.
         )

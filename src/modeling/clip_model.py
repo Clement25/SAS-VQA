@@ -36,7 +36,8 @@ class CLIPModelforFinetune(nn.Module):
                 'pixel_values': batch['visual_inputs'],
                 'input_ids': batch['text_input_ids'],
                 'attention_mask': batch['text_attention_mask'],
-                'labels': batch['labels']
+                'labels': batch['labels'],
+                'decoder_attention_mask': batch['decoder_attention_mask']
             }
             outputs = self.VLModel(inputs)
             if self.training:
