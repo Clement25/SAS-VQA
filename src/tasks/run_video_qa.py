@@ -24,6 +24,7 @@ from src.utils.load_save import (ModelSaver,
 from src.utils.load_save import E2E_TrainingRestorer as TrainingRestorer
 from src.optimization.sched import get_lr_sched
 from src.optimization.utils import setup_e2e_optimizer
+from torch.optim.lr_scheduler import MultiStepLR
 
 from tqdm import tqdm
 from os.path import join
@@ -40,13 +41,6 @@ def mk_tgif_qa_dataloader(task_type, anno_path, ans2label, img_hdf5_dir, cfg, to
     """
     Returns:
         list(dict), each dict is
-            action and transition: {
-                "gif_name": "tumblr_nk172bbdPI1u1lr18o1_250",
-                "question": "What does the butterfly do 10 or more than 10 times ?",
-                "options": ["stuff marshmallow", "holds a phone towards face",
-                            "fall over", "talk", "flap wings"],
-                "answer": 4
-                }
             frameqa: {
                 "gif_name": "tumblr_no73q2fm0I1uuf348o1_250",
                 "question": "what is being placed in the white ice cream cone ?",
@@ -161,9 +155,6 @@ def mk_tgif_qa_dataloader(task_type, anno_path, ans2label, img_hdf5_dir, cfg, to
         batch_size = cfg.inference_batch_size
     else:
         batch_size = cfg.train_batch_size if is_train else cfg.val_batch_size
-    sampler = DistributedSampler(
-        dataset, num_replicas=hvd.size(), rank=hvd.rank(),
-        shuffle=is_train)
     
     if 'clip' in cfg.model.pretrained_model.lower():
         vqa_collator = VideoQACollator(tokenizer=tokenizer,
@@ -181,8 +172,7 @@ def mk_tgif_qa_dataloader(task_type, anno_path, ans2label, img_hdf5_dir, cfg, to
                                     img_size=cfg.img_size)
     dataloader = DataLoader(dataset,
                             batch_size=batch_size,
-                            shuffle=False,
-                            sampler=sampler,
+                            shuffle=is_train,
                             num_workers=cfg.n_workers,
                             pin_memory=cfg.pin_mem,
                             collate_fn=vqa_collator.collate_batch)
@@ -333,9 +323,9 @@ def validate(model, val_loader, cfg, eval_score=True, processor=None, ans2label=
         
     if cfg.debug:
         LOGGER.info(qa_results[:10])
-    n_ex_per_rank = all_gather_list(n_ex)
-    loss = sum(all_gather_list(loss))
-    n_ex = sum(all_gather_list(n_ex))
+    # n_ex_per_rank = all_gather_list(n_ex)
+    # loss = sum(all_gather_list(loss))
+    # n_ex = sum(all_gather_list(n_ex))
     # average loss for each example
     val_log = {f'valid/loss': float(loss / n_ex)}
     if eval_score:
@@ -346,13 +336,13 @@ def validate(model, val_loader, cfg, eval_score=True, processor=None, ans2label=
         # print(f"{hvd.rank()}: {vqa_scores}")
 
         # Gather scores
-        scores_per_rank = all_gather_list(vqa_scores)
+        scores_per_rank = vqa_scores
         gathered_scores = {}
         if "ratios" in scores_per_rank[0]:
             gathered_ratios = {
                 k: [0, 0] for k, _ in scores_per_rank[0]["ratios"].items()}
             # Gather ratios
-            for rank_id in range(len(n_ex_per_rank)):
+            for rank_id in range(len(n_ex)):
                 current_ratios = scores_per_rank[rank_id]["ratios"]
                 for k, v in current_ratios.items():
                     gathered_ratios[k][1] += v[1]
@@ -409,15 +399,15 @@ def validate(model, val_loader, cfg, eval_score=True, processor=None, ans2label=
 
 def start_training(cfg):
     set_random_seed(cfg.seed)
-    n_gpu = hvd.size()
-    cfg.n_gpu = n_gpu
-    device = torch.device("cuda", hvd.local_rank())
-    torch.cuda.set_device(hvd.local_rank())
-    if hvd.rank() != 0:
-        LOGGER.disabled = True
+    # n_gpu = hvd.size()
+    cfg.n_gpu = n_gpu = 1
+    device = torch.device("cuda")
+    # torch.cuda.set_device(hvd.local_rank())
+    # if hvd.rank() != 0:
+    #     LOGGER.disabled = True
     LOGGER.info("device: {} n_gpu: {}, rank: {}, "
                 "16-bits training: {}".format(
-                    device, n_gpu, hvd.rank(), bool(cfg.fp16)))
+                    device, n_gpu, 0, bool(cfg.fp16)))
 
 
     if 'blip' in cfg.model.pretrained_model.lower():
@@ -441,22 +431,15 @@ def start_training(cfg):
     train_loader, val_loader, test_loader = setup_dataloaders(cfg, tokenizer)
     model = setup_model(cfg, device=device)
     model.train()
-    optimizer = setup_e2e_optimizer(model, cfg)
 
-    # Horovod: (optional) compression algorithm.compressin
-    compression = hvd.Compression.none
-    named_parameters = [(n, p) for (n, p) in model.named_parameters() if p.requires_grad]
-    optimizer = hvd.DistributedOptimizer(
-        optimizer, named_parameters=named_parameters,
-        compression=compression)
+    optimizer = getattr(torch.optim, cfg.optim)(
+        params = model.parameters(), lr = cfg.learning_rate
+    )
+    if cfg.decay == 'constant':
+        scheduler = None 
+    elif cfg.decay == 'multi_step':
+        scheduler = MultiStepLR(optimizer, milestones=cfg.step_decay_epochs, gamma=cfg.gamma)
 
-    #  Horovod: broadcast parameters & optimizer state.
-    hvd.broadcast_parameters(model.state_dict(), root_rank=0)
-    hvd.broadcast_optimizer_state(optimizer, root_rank=0)
-
-    model, optimizer = amp.initialize(
-        model, optimizer, opt_level='O0',
-        keep_batchnorm_fp32=True)
 
     # compute the number of steps and update cfg
     total_n_examples = len(train_loader.dataset) * cfg.max_n_example_per_group
@@ -476,16 +459,10 @@ def start_training(cfg):
     global_step = restorer.global_step
     TB_LOGGER.global_step = global_step
         
-    if hvd.rank() == 0:
-        TB_LOGGER.create(join(cfg.output_dir, 'log'))
-        pbar = tqdm(total=cfg.num_train_steps)
-        model_saver = ModelSaver(join(cfg.output_dir, "ckpt"))
-        add_log_to_file(join(cfg.output_dir, "log", "log.txt"))
-    else:
-        LOGGER.disabled = True
-        pbar = NoOp()
-        model_saver = NoOp()
-        restorer = NoOp()
+    TB_LOGGER.create(join(cfg.output_dir, 'log'))
+    pbar = tqdm(total=cfg.num_train_steps)
+    model_saver = ModelSaver(join(cfg.output_dir, "ckpt"))
+    add_log_to_file(join(cfg.output_dir, "log", "log.txt"))
 
     if global_step > 0:
         pbar.update(global_step)
@@ -494,19 +471,19 @@ def start_training(cfg):
     LOGGER.info("Starting training...")
     LOGGER.info(f"***** Running training with {n_gpu} GPUs *****")
     LOGGER.info(f"  Single-GPU Non-Accumulated batch size = {cfg.train_batch_size}")
-    LOGGER.info(f"  max_n_example_per_group = {cfg.max_n_example_per_group}")
-    LOGGER.info(f"  Accumulate steps = {cfg.gradient_accumulation_steps}")
-    LOGGER.info(f"  Total batch size = #GPUs * Single-GPU batch size * "
-                f"max_n_example_per_group * Accumulate steps [Image] = {total_train_batch_size}")
+    # LOGGER.info(f"  max_n_example_per_group = {cfg.max_n_example_per_group}")
+    # LOGGER.info(f"  Accumulate steps = {cfg.gradient_accumulation_steps}")
+    # LOGGER.info(f"  Total batch size = #GPUs * Single-GPU batch size * "
+                # f"max_n_example_per_group * Accumulate steps [Image] = {total_train_batch_size}")
     LOGGER.info(f"  Total #epochs = {cfg.num_train_epochs}")
     LOGGER.info(f"  Total #steps = {cfg.num_train_steps}")
     LOGGER.info(f"  Validate every {cfg.valid_steps} steps, in total {actual_num_valid} times")
 
     # quick hack for amp delay_unscale bug
-    with optimizer.skip_synchronize():
-        optimizer.zero_grad()
-        if global_step == 0:
-            optimizer.step()
+    # with optimizer.skip_synchronize():
+    optimizer.zero_grad()
+    if global_step == 0:
+        optimizer.step()
             
     debug_step = 3
     running_loss = RunningMeter('train_loss')
@@ -529,14 +506,8 @@ def start_training(cfg):
             
         running_loss(loss.item())
 
-        # backward pass
-        delay_unscale = (step + 1) % cfg.gradient_accumulation_steps != 0
-        with amp.scale_loss(
-                loss, optimizer, delay_unscale=delay_unscale
-                ) as scaled_loss:
-            scaled_loss.backward()
-            zero_none_grad(model)
-            optimizer.synchronize()
+        loss.backward()
+        optimizer.step()
 
         # optimizer
         if (step + 1) % cfg.gradient_accumulation_steps == 0:
@@ -582,9 +553,8 @@ def start_training(cfg):
                 if p[1].requires_grad and p[1].grad is None]
 
             assert len(none_grads) == 0, f"{none_grads}"
-            with optimizer.skip_synchronize():
-                optimizer.step()
-                optimizer.zero_grad()
+            optimizer.step()
+            optimizer.zero_grad()
             restorer.step()
             pbar.update(1)
 
@@ -598,6 +568,9 @@ def start_training(cfg):
                 # total_correct = total_preds = 0
                 validate(model, test_loader, cfg, global_step, flag_prtr=flag_prtr, \
                     processor=tokenizer, ans2label=ans2label)
+
+                if scheduler is not None:
+                    scheduler.step()
                 
         if global_step >= cfg.num_train_steps:
             break
@@ -708,7 +681,6 @@ def start_inference(cfg):
 
 if __name__ == '__main__':
     # Initialize Horovod
-    hvd.init()
     input_cfg = shared_configs.get_video_qa_args()
     if input_cfg.do_inference:
         start_inference(input_cfg)
