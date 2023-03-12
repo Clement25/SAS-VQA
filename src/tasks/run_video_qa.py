@@ -170,13 +170,15 @@ def mk_tgif_qa_dataloader(task_type, anno_path, ans2label, img_hdf5_dir, cfg, to
                                     max_length=cfg.max_txt_len,
                                     task_type=cfg.task,
                                     nframe=cfg.nframe,
-                                    samp_policy=cfg.samp_policy)
+                                    samp_policy=cfg.samp_policy,
+                                    img_size=cfg.img_size)
     elif 'blip' in cfg.model.pretrained_model.lower():
-        vqa_collator = BLIPVideoQACollator(tokenizer=tokenizer,
+        vqa_collator = BLIPVideoQACollator(processor=tokenizer,
                                     max_length=cfg.max_txt_len,
                                     task_type=cfg.task,
                                     nframe=cfg.nframe,
-                                    samp_policy=cfg.samp_policy)
+                                    samp_policy=cfg.samp_policy,
+                                    img_size=cfg.img_size)
     dataloader = DataLoader(dataset,
                             batch_size=batch_size,
                             shuffle=False,
@@ -244,10 +246,11 @@ def setup_model(cfg, device=None):
     ]
     for k in add_attr_list:
         setattr(cfg.model, k, cfg[k])
+    
     if 'clip' in cfg.model.pretrained_model.lower():
         vlm_model_cls = CLIPForSeqClassification
     elif 'blip' in cfg.model.pretrained_model.lower():
-        vim_model_cls = BLIPBaseModel
+        vlm_model_cls = BLIPBaseModel
 
     # we separate the CNN and the transformer in order to use different optimizer for each
     # transformer still has a CNN layer inside, used to down sample grid.
@@ -276,7 +279,7 @@ def forward_step(model, batch, cfg):
     return outputs
 
 @torch.no_grad()
-def validate(model, val_loader, cfg, eval_score=True):
+def validate(model, val_loader, cfg, eval_score=True, processor=None, ans2label=None, flag_prtr=0):
     """use eval_score=False when doing inference on test sets where answers are not available"""
     model.eval()
 
@@ -305,21 +308,18 @@ def validate(model, val_loader, cfg, eval_score=True):
         
         # (B * max(num_frm), C, H, W)
         losses = []
-
-        # (B * num_frm, C, H, W)
         outputs = forward_step(model, batch, cfg)
-        logits = outputs["logits"].cpu()
-        _loss = outputs["loss"].sum().item() if isinstance(
-            outputs["loss"], torch.Tensor) else 0
-        losses.append(_loss)
-
-        if cfg.task in ["action", "transition", "frameqa", "msvd_qa", "msrvtt_qa"]:
+        if flag_prtr == 1:
             # cross entropy
+            logits = outputs["logits"].cpu()
+            _loss = outputs["loss"].sum().item() if isinstance(
+                outputs["loss"], torch.Tensor) else 0
+            losses.append(_loss)
             pred_labels = logits.argmax(dim=-1).tolist()
-        else:
-            # mse
-            preds = (logits + 0.5).long().clamp(min=1, max=10)
-            pred_labels = preds.data.squeeze().tolist()
+        elif flag_prtr == 0:
+            # mapback to task-specific vocabulary ids
+            pred_labels_str = processor.batch_decode(outputs, skip_special_tokens=True)
+            pred_labels = [ans2label.get(w, -1) for w in pred_labels_str]
             
         for qid, pred_label in zip(question_ids, pred_labels):
             qa_results.append(dict(
@@ -330,7 +330,7 @@ def validate(model, val_loader, cfg, eval_score=True):
         pbar.update(1)
         if cfg.debug and val_step >= debug_step:
             break
-
+        
     if cfg.debug:
         LOGGER.info(qa_results[:10])
     n_ex_per_rank = all_gather_list(n_ex)
@@ -418,17 +418,27 @@ def start_training(cfg):
     LOGGER.info("device: {} n_gpu: {}, rank: {}, "
                 "16-bits training: {}".format(
                     device, n_gpu, hvd.rank(), bool(cfg.fp16)))
-    
+
+
+    if 'blip' in cfg.model.pretrained_model.lower():
+        flag_prtr = 0
+        # rebuild the ans2label dict
+        anno_files = (cfg.train_datasets[0].txt,)
+        ans2label = build_common_answer_dict(anno_files, 1000)
+    elif 'clip' in cfg.model.pretrained_model.lower():
+        flag_prtr = 1
+
     # prepare data
     if cfg.task in ['msvd_qa', 'msrvtt_qa']:
-        if 'clip' in cfg.model.pretrained_model.lower():
+        if flag_prtr == 1:
             tokenizer = AutoTokenizer.from_pretrained(cfg.model.pretrained_model)
-        elif 'blip' in cfg.model.pretrained_model.lower():
+        elif flag_prtr == 0:
             tokenizer = AutoProcessor.from_pretrained(cfg.model.pretrained_model)
     else:
         raise ValueError
+    
+    # setup dataset and model
     train_loader, val_loader, test_loader = setup_dataloaders(cfg, tokenizer)
-
     model = setup_model(cfg, device=device)
     model.train()
     optimizer = setup_e2e_optimizer(model, cfg)
@@ -507,12 +517,18 @@ def start_training(cfg):
         del batch["question_ids"]
         outputs = forward_step(model, batch, cfg)
         
-        loss = outputs["loss"].mean()
+        
+        if flag_prtr == 1:
+            loss = outputs["loss"].mean()
+            logits = outputs["logits"]
+            preds = logits.argmax(dim=-1)
+            total_correct += (preds == batch["labels"]).sum()
+            total_preds += len(preds)
+        elif flag_prtr == 0:
+            loss = outputs
+            
         running_loss(loss.item())
-        logits = outputs["logits"]
-        preds = logits.argmax(dim=-1)
-        total_correct += (preds == batch["labels"]).sum()
-        total_preds += len(preds)
+
         # backward pass
         delay_unscale = (step + 1) % cfg.gradient_accumulation_steps != 0
         with amp.scale_loss(
@@ -524,7 +540,7 @@ def start_training(cfg):
 
         # optimizer
         if (step + 1) % cfg.gradient_accumulation_steps == 0:
-            acc = total_correct / total_preds
+            acc = total_correct / (total_preds + 1e-6)
             pbar.set_description(str(running_loss)+' acc: {:2.3f}'.format(acc * 100))
             global_step += 1
             # learning rate scheduling
@@ -549,7 +565,6 @@ def start_training(cfg):
             TB_LOGGER.add_scalar(
                 "train/lr_transformer", lr_this_step_transformer,
                 global_step)
-
             TB_LOGGER.add_scalar('train/loss', running_loss.val, global_step)
 
             # update model params
@@ -567,7 +582,6 @@ def start_training(cfg):
                 if p[1].requires_grad and p[1].grad is None]
 
             assert len(none_grads) == 0, f"{none_grads}"
-
             with optimizer.skip_synchronize():
                 optimizer.step()
                 optimizer.zero_grad()
@@ -578,23 +592,18 @@ def start_training(cfg):
             if global_step % cfg.valid_steps == 0:
                 total_correct = total_preds = 0
                 LOGGER.info(f'Step {global_step}: start validation')
-                validate(model, val_loader, cfg, global_step)
+                validate(model, val_loader, cfg, global_step, flag_prtr=flag_prtr, \
+                    processor=tokenizer, ans2label=ans2label)
                 model_saver.save(step=global_step, model=model)
                 # total_correct = total_preds = 0
-                validate(model, test_loader, cfg, global_step)
+                validate(model, test_loader, cfg, global_step, flag_prtr=flag_prtr, \
+                    processor=tokenizer, ans2label=ans2label)
                 
         if global_step >= cfg.num_train_steps:
             break
 
         if cfg.debug and global_step >= debug_step:
             break
-
-    if global_step % cfg.valid_steps != 0:
-        LOGGER.info(f'Step {global_step}: start validation')
-        qa_results, qa_scores = validate(
-            model, val_loader, cfg, global_step)
-        model_saver.save(step=global_step, model=model)
-
 
 def start_inference(cfg):
     set_random_seed(cfg.seed)

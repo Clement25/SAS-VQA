@@ -87,6 +87,7 @@ class VideoQADataset(BaseDataset):
             example["options_str_list"] = data["options"]
         elif self.task_type in self.open_ended_qa_names:
             if self.return_label:
+                example["str_label"] = example["label"] # for tokenization use
                 example["label"] = self.ans2label.get(example["label"], IGNORE_INDEX)
         if not self.return_label:
             example["label"] = None
@@ -115,8 +116,6 @@ class VideoQADataset(BaseDataset):
 
         # qid: wid
         qid2pred_ans = {r["question_id"]: r["answer"] for r in results}
-        # if self.task_type in self.open_ended_qa_names:  # convert ans_idx, int --> str
-        #     qid2pred_ans = {k: self.label2ans[v] for k, v in qid2pred_ans.items()}
             
         for qid, pred_ans in qid2pred_ans.items():
             if type(pred_ans) is list:
@@ -153,15 +152,25 @@ class VideoQADataset(BaseDataset):
             metrics["ratios"] = ratios
         return metrics
 
-
-class VideoQACollator(object):
-    def __init__(self, tokenizer, max_length=20, task_type="action", n_options=5, nframe=4, samp_policy='random'):
-        self.tokenizer = tokenizer
+class BaseQACollator(object):
+    def __init__(self, max_length=20, task_type="action", n_options=5, nframe=4, samp_policy='random', img_size=224):
         self.max_length = max_length
         self.task_type = task_type
         self.n_options = n_options
         self.nframe = nframe
         self.samp_policy = samp_policy
+        self.img_size = img_size
+    
+    def collate_batch(self, batch):
+        raise NotImplementedError("collate function hasn't been implemented")
+
+class VideoQACollator(BaseQACollator):
+    def __init__(self, tokenizer, max_length=20, task_type="action", n_options=5, nframe=4, samp_policy='random', img_size=224):
+        super(VideoQACollator, self).__init__(
+            max_length=max_length, task_type=task_type,
+            n_options=n_options, nframe=nframe, samp_policy=samp_policy, img_size=img_size
+        )
+        self.tokenizer = tokenizer
 
     def collate_batch(self, batch):
         v_collate = default_collate
@@ -179,8 +188,7 @@ class VideoQACollator(object):
         else:
             text_str_list = [d["q_str"] for d in text_examples]  # (B, )
             
-        batch_enc = self.tokenizer(text_str_list, padding = True, truncation = True,   
-                                   return_tensors='pt')
+        batch_enc = self.tokenizer(text_str_list, padding = True, truncation = True, return_tensors='pt')
 
         text_input_ids = batch_enc.input_ids  # (B, L)
         text_attention_mask = batch_enc.attention_mask  # (B, L)
@@ -199,7 +207,7 @@ class VideoQACollator(object):
             raise ValueError("Sample strategy can only be chosen from ['uniform', 'random']")
         B, L, _ = visual_inputs.size()
         # assert L == self.nframe
-        visual_inputs = visual_inputs.reshape(B*L, 3, 224, 224)
+        visual_inputs = visual_inputs.reshape(B*L, 3, self.img_size, self.img_size)
         video_lengths = [L] * B
         
         video_start_end = [0]
@@ -220,14 +228,13 @@ class VideoQACollator(object):
             n_examples_list=n_examples_list  # used to create image feature copies.
         )
 
-class BLIPVideoQACollator(object):
-    def __init__(self, processor, max_length=20, task_type="action", n_options=5, nframe=4, samp_policy='random'):
+class BLIPVideoQACollator(BaseQACollator):
+    def __init__(self, processor, max_length=20, task_type="action", n_options=5, nframe=4, samp_policy='random', img_size=384):
+        super(BLIPVideoQACollator, self).__init__(
+            max_length=max_length, task_type=task_type,
+            n_options=n_options, nframe=nframe, samp_policy=samp_policy, img_size=img_size
+        )
         self.processor = processor
-        self.max_length = max_length
-        self.task_type = task_type
-        self.n_options = n_options
-        self.nframe = nframe
-        self.samp_policy = samp_policy
 
     def collate_batch(self, batch):
         v_collate = default_collate
@@ -245,7 +252,6 @@ class BLIPVideoQACollator(object):
         else:
             text_str_list = [d["q_str"] for d in text_examples]  # (B, )
             
-        
         bsz, orig_l, _ = visual_inputs.size()
         if self.samp_policy == 'uniform':
             T = orig_l // self.nframe + (1 if orig_l % self.nframe > 0 else 0)
@@ -257,7 +263,8 @@ class BLIPVideoQACollator(object):
             vinds = torch.arange(bsz).unsqueeze(-1).expand(bsz, inds.size(-1))
             visual_inputs = visual_inputs[vinds,inds]
         elif self.samp_policy == 'single':
-            visual_inputs = visual_inputs[:,orig_l // 2]
+            i = orig_l//2
+            visual_inputs = visual_inputs[:, i:i+1]
         else:
             raise ValueError("Sample strategy can only be chosen from ['uniform', 'random']")
         
@@ -267,19 +274,21 @@ class BLIPVideoQACollator(object):
         text_input_ids = batch_enc.input_ids  # (B, L)
         text_attention_mask = batch_enc.attention_mask  # (B, L)
         
-        labels = self.processor(text=batch['label'], return_tensors='pt')
 
         B, L, _ = visual_inputs.size()
         # assert L == self.nframe
-        visual_inputs = visual_inputs.reshape(B*L, 3, 384, 384)
+        visual_inputs = visual_inputs.reshape(B*L, 3, self.img_size, self.img_size)
         video_lengths = [L] * B
         
         video_start_end = [0]
         for l in video_lengths:
             video_start_end.append(video_start_end[-1] + l)
 
-        labels = default_collate([int(d["label"]) for d in text_examples]) \
-            if text_examples[0]["label"] is not None else None  # (B, #ans)
+        # BLIP labels
+        labels = self.processor(text=[d['str_label'] for d in text_examples], padding='longest', return_tensors='pt') if 'str_label' in text_examples[0] else None
+        # else:
+        #     labels = default_collate([int(d["label"]) for d in text_examples]) \
+        #         if text_examples[0]["label"] is not None else None  # (B, #ans)
         question_ids = [d["question_id"] for d in text_examples]
         
         return dict(
@@ -288,6 +297,6 @@ class BLIPVideoQACollator(object):
             text_attention_mask=text_attention_mask,
             question_ids=question_ids,
             video_start_end=video_start_end,
-            labels=labels,
+            labels=labels.input_ids if labels is not None else None,
             n_examples_list=n_examples_list  # used to create image feature copies.
         )

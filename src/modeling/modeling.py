@@ -149,7 +149,6 @@ class VisualInputEmbedding(nn.Module):
             *col_shape)  # broadcast automatically
         return grid
 
-
 class CLIPBaseModel(nn.Module):
     """
 
@@ -216,8 +215,8 @@ class BLIPBaseModel(nn.Module):
         if self.training:
             outputs = self.model(**inputs) 
         else:
-            outputs = self.generate(**inputs)
-        return outputs.loss
+            outputs = self.model.generate(**inputs)
+        return outputs
 
 def instance_bce_with_logits(logits, labels, reduction="mean"):
     assert logits.dim() == 2

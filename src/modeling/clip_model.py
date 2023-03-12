@@ -38,8 +38,11 @@ class CLIPModelforFinetune(nn.Module):
                 'attention_mask': batch['text_attention_mask'],
                 'labels': batch['labels']
             }
-            loss = self.VLModel(inputs)
-            return loss
+            outputs = self.VLModel(inputs)
+            if self.training:
+                return outputs.loss
+            else:
+                return outputs
 
     def calc_loss(self, logits, labels):
         if labels is not None:
