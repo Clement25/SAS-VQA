@@ -7,7 +7,7 @@ from torch import nn
 import torch.nn.functional as F
 
 from transformers import CLIPTextModel, CLIPVisionModelWithProjection
-from transformers import BlipForQuestionAnswering
+from transformers import BlipForQuestionAnswering, BlipVisionModel, BlipTextModel
 from apex.normalization.fused_layer_norm import FusedLayerNorm as LayerNorm
 
 
@@ -171,7 +171,7 @@ class CLIPBaseModel(nn.Module):
         super().__init__()
         self.config = config
         self.txt_model = CLIPTextModel.from_pretrained(config.pretrained_model)
-        self.vis_modal = CLIPVisionModelWithProjection.from_pretrained(config.pretrained_model)
+        self.vis_model = CLIPVisionModelWithProjection.from_pretrained(config.pretrained_model)
 
     def forward(self, txt_inputs, vis_inputs):
         r"""Modified from BertModel
@@ -180,7 +180,7 @@ class CLIPBaseModel(nn.Module):
         attention_mask: (B, Lt)  with 1 indicates valid, 0 indicates invalid position.
         """
         txt_out = self.txt_model(**txt_inputs)
-        vis_out = self.vis_modal(**vis_inputs)
+        vis_out = self.vis_model(**vis_inputs)
         return dict(txt_out=txt_out, vis_out=vis_out, txt_attn_mask=txt_inputs["attention_mask"])
 
 class BLIPBaseModel(nn.Module):
@@ -204,20 +204,27 @@ class BLIPBaseModel(nn.Module):
     def __init__(self, config):
         super().__init__()
         self.config = config
-        self.blip = BlipForQuestionAnswering.from_pretrained(config.pretrained_model)
+        self.vis_model = BlipVisionModel.from_pretrained(config.pretrained_model)
+        self.txt_model = BlipTextModel.from_pretrained(config.pretrained_model)
+        self.classifier = nn.Linear(config.txt_output_size, config.num_labels)
 
-    def forward(self, inputs):
+    def forward(self, txt_inputs, vis_inputs):
         r"""Modified from BertModel
         text_input_ids: (B, Lt)
         visual_inputs: (B * #frame, C, H, W)
         attention_mask: (B, Lt)  with 1 indicates valid, 0 indicates invalid position.
         """
-        if self.training:
-            inputs['labels'] = inputs['labels'][...,1:] # shift left
-            inputs['decoder_attention_mask'] = inputs['decoder_attention_mask'][...,1:]
-            outputs = self.blip(**inputs)
-        else:
-            outputs = self.blip.generate(**inputs)
+        vis_out = self.vis_model(**vis_inputs)
+        txt_out = self.txt_model(**txt_inputs, 
+            encoder_hidden_states=vis_out.last_hidden_state)
+        outputs = self.classifier(txt_out.pooler_output)
+        # return dict(txt_out=txt_out, vis_out=vis_out, txt_attn_mask=txt_inputs["attention_mask"])
+        # if self.training:
+        #     outputs = self.blip(**inputs)
+        # else:
+        #     inputs.pop('labels')
+        #     inputs.pop('decoder_attention_mask')
+        #     outputs = self.blip.generate(**inputs)
         return outputs
 
 def instance_bce_with_logits(logits, labels, reduction="mean"):
@@ -286,9 +293,9 @@ class CLIPForSeqClassification(nn.Module):
         self.config = config
 
         if 'clip' in config.pretrained_model.lower():
-            self.clip = CLIPBaseModel(config)
-        # elif 'blip' in config.pretrained_model.lower():
-            # self.vlm = BLIPBaseModel(config)
+            self.vlm = CLIPBaseModel(config)
+        elif 'blip' in config.pretrained_model.lower():
+            self.vlm = BLIPBaseModel(config)
 
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
                 
@@ -298,13 +305,17 @@ class CLIPForSeqClassification(nn.Module):
         self.classifier = nn.Linear(config.txt_output_size, config.num_labels)
 
     def forward(self, txt_inputs, vis_inputs, video_start_end, repeat_counts=None):
-        outputs = self.clip(
+        outputs = self.vlm(
             txt_inputs=txt_inputs,
             vis_inputs=vis_inputs,
         )
         txt_output, vis_output = outputs['txt_out'], outputs['vis_out']
         txt_attn_mask = outputs['txt_attn_mask']    # (B, L_t)
-        vis_pooled_output = vis_output.image_embeds    # (\sum L_i, E)
+        
+        if 'pooler_output' in vis_output.keys():
+            vis_pooled_output = vis_output.pooler_output
+        else:
+            vis_pooled_output = vis_output.image_embeds    # (\sum L_i, E)
         txt_pooled_output = txt_output.pooler_output    # (B, E_t)
 
         bsz, e_t = txt_pooled_output.size()
@@ -328,7 +339,7 @@ class CLIPForSeqClassification(nn.Module):
         
         attn_outputs = self.attention(txt_attn_in, vis_attn_in, txt_attn_mask) # 
         logits = self.classifier(attn_outputs)[:,0,:]   # (b, V)
-        return logits, None
+        return logits
 
 
 

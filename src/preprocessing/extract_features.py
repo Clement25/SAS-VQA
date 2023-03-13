@@ -221,11 +221,11 @@ if __name__ == '__main__':
         json_outfile = os.path.join(outpath, 'vidmapping.json')
         
         # generate mapping dict
-        if not os.path.exists(outpath):
-            generate_vidid_json(video_paths, outpath)
+        if not os.path.exists(json_outfile):
+            generate_vidid_json(video_paths, json_outfile)
         # generate h5 file
-        generate_h5_parallel(processor, vision_model, video_paths, args,
-                    h5_outfile)
+        # generate_h5_parallel(processor, vision_model, video_paths, args,
+                    # h5_outfile)
 
     elif args.dataset == 'svqa':
         args.annotation_file = './data/SVQA/questions.json'

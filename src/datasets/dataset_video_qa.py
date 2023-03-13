@@ -274,7 +274,6 @@ class BLIPVideoQACollator(BaseQACollator):
         text_input_ids = batch_enc.input_ids  # (B, L)
         text_attention_mask = batch_enc.attention_mask  # (B, L)
         
-
         B, L, _ = visual_inputs.size()
         # assert L == self.nframe
         visual_inputs = visual_inputs.reshape(B*L, 3, self.img_size, self.img_size)
@@ -285,10 +284,9 @@ class BLIPVideoQACollator(BaseQACollator):
             video_start_end.append(video_start_end[-1] + l)
 
         # BLIP labels
-        labels = self.processor(text=[d['str_label'] for d in text_examples], padding='longest', return_tensors='pt') if 'str_label' in text_examples[0] else None
-        # else:
-        #     labels = default_collate([int(d["label"]) for d in text_examples]) \
-        #         if text_examples[0]["label"] is not None else None  # (B, #ans)
+        # labels = self.processor(text=[d['str_label'] for d in text_examples], padding='longest', return_tensors='pt') if 'str_label' in text_examples[0] else None
+        labels = default_collate([int(d["label"]) for d in text_examples]) \
+            if text_examples[0]["label"] is not None else None  # (B, #ans)
         question_ids = [d["question_id"] for d in text_examples]
         
         return dict(
@@ -297,7 +295,8 @@ class BLIPVideoQACollator(BaseQACollator):
             text_attention_mask=text_attention_mask,
             question_ids=question_ids,
             video_start_end=video_start_end,
-            labels=labels.input_ids if labels is not None else None,
-            decoder_attention_mask=labels.attention_mask if labels is not None else None,
+            # labels=labels.input_ids if labels is not None else None,
+            # decoder_attention_mask=labels.attention_mask if labels is not None else None,
+            labels=labels,
             n_examples_list=n_examples_list  # used to create image feature copies.
         )

@@ -299,22 +299,23 @@ def validate(model, val_loader, cfg, eval_score=True, processor=None, ans2label=
         # (B * max(num_frm), C, H, W)
         losses = []
         outputs = forward_step(model, batch, cfg)
-        if flag_prtr == 1:
+        if flag_prtr in [0, 1]:
             # cross entropy
             logits = outputs["logits"].cpu()
             _loss = outputs["loss"].sum().item() if isinstance(
                 outputs["loss"], torch.Tensor) else 0
             losses.append(_loss)
             pred_labels = logits.argmax(dim=-1).tolist()
-        elif flag_prtr == 0:
+        # elif flag_prtr == 0:
             # mapback to task-specific vocabulary ids
-            pred_labels_str = processor.batch_decode(outputs, skip_special_tokens=True)
-            pred_labels = [ans2label.get(w, -1) for w in pred_labels_str]
+            # pred_labels_str = processor.batch_decode(outputs, skip_special_tokens=True)
+            # pred_labels = [ans2label.get(w, -1) for w in pred_labels_str]
             
         for qid, pred_label in zip(question_ids, pred_labels):
             qa_results.append(dict(
                 question_id=qid,
                 answer=pred_label,
+                # answer_str=pred_label_str,
                 data=val_loader.dataset.qid2data[qid]
             ))
         pbar.update(1)
@@ -323,58 +324,51 @@ def validate(model, val_loader, cfg, eval_score=True, processor=None, ans2label=
         
     if cfg.debug:
         LOGGER.info(qa_results[:10])
-    # n_ex_per_rank = all_gather_list(n_ex)
-    # loss = sum(all_gather_list(loss))
-    # n_ex = sum(all_gather_list(n_ex))
-    # average loss for each example
     val_log = {f'valid/loss': float(loss / n_ex)}
     if eval_score:
         LOGGER.info(f"QA Task [{cfg.task}], "
                     f"{len(qa_results)} qa_results,"
                     f"3 examples here: {qa_results[:3]}")
         vqa_scores = val_loader.dataset.evaluate_tgif_qa(qa_results)
-        # print(f"{hvd.rank()}: {vqa_scores}")
 
         # Gather scores
         scores_per_rank = vqa_scores
         gathered_scores = {}
-        if "ratios" in scores_per_rank[0]:
+        if "ratios" in scores_per_rank:
             gathered_ratios = {
-                k: [0, 0] for k, _ in scores_per_rank[0]["ratios"].items()}
+                k: [0, 0] for k, _ in scores_per_rank["ratios"].items()}
             # Gather ratios
-            for rank_id in range(len(n_ex)):
-                current_ratios = scores_per_rank[rank_id]["ratios"]
-                for k, v in current_ratios.items():
-                    gathered_ratios[k][1] += v[1]
+            current_ratios = scores_per_rank["ratios"]
+            for k, v in current_ratios.items():
+                gathered_ratios[k][1] += v[1]
             for k, v in gathered_ratios.items():
                 gathered_ratios[k][0] = get_rounded_percentage(
                     1. * v[1] / n_ex)
             gathered_scores["ratios"] = gathered_ratios
 
         # FIXME: Gather scores become complicated due to np.mean and dict format.
-        for scores_k, _ in vqa_scores.items():
+        for scores_k, gathered_v in vqa_scores.items():
             if "ratio" in scores_k:
                 continue
-            gathered_v = 0
-            for rank_id, n in enumerate(n_ex_per_rank):
-                curr_acc, curr_n_ex = 0, 0
-                if "overall" in scores_k:
-                    curr_acc = scores_per_rank[rank_id][scores_k] * n
-                else:
-                    if "ratios" in scores_per_rank[0]:
-                        curr_n_ex = scores_per_rank[
-                                rank_id]["ratios"][
-                                    scores_k.replace("acc", "ratio")][1]
-                        curr_acc = scores_per_rank[rank_id][
-                            scores_k] * curr_n_ex
-                gathered_v += curr_acc
-            if "overall" in scores_k:
-                gathered_v = gathered_v * 1. / n_ex
-            else:
-                if "ratios" in scores_per_rank[0]:
-                    _num = gathered_ratios[
-                        scores_k.replace("acc", "ratio")][1]
-                    gathered_v = gathered_v * 1. / _num if _num != 0 else 0
+            
+        #     curr_acc, curr_n_ex = 0, 0
+        #     if "overall" in scores_k:
+        #         curr_acc = scores_per_rank[scores_k] * n
+        #     else:
+        #         if "ratios" in scores_per_rank:
+        #             curr_n_ex = scores_per_rank["ratios"][
+        #                         scores_k.replace("acc", "ratio")][1]
+        #             curr_acc = scores_per_rank[
+        #                 scores_k] * curr_n_ex
+
+        #     gathered_v += curr_acc
+        #     if "overall" in scores_k:
+        #         gathered_v = gathered_v * 1. / n_ex
+        #     else:
+        #         if "ratios" in scores_per_rank:
+        #             _num = gathered_ratios[
+        #                 scores_k.replace("acc", "ratio")][1]
+        #             gathered_v = gathered_v * 1. / _num if _num != 0 else 0
                     
             if cfg.task in ["action", "transition", "msvd_qa", "frameqa", "msrvtt_qa"]:
                 gathered_scores[scores_k] = get_rounded_percentage(
@@ -433,13 +427,12 @@ def start_training(cfg):
     model.train()
 
     optimizer = getattr(torch.optim, cfg.optim)(
-        params = model.parameters(), lr = cfg.learning_rate
+        params = [p for p in model.parameters() if p.requires_grad], lr = cfg.learning_rate
     )
     if cfg.decay == 'constant':
         scheduler = None 
     elif cfg.decay == 'multi_step':
         scheduler = MultiStepLR(optimizer, milestones=cfg.step_decay_epochs, gamma=cfg.gamma)
-
 
     # compute the number of steps and update cfg
     total_n_examples = len(train_loader.dataset) * cfg.max_n_example_per_group
@@ -494,7 +487,6 @@ def start_training(cfg):
         del batch["question_ids"]
         outputs = forward_step(model, batch, cfg)
         
-        
         if flag_prtr == 1:
             loss = outputs["loss"].mean()
             logits = outputs["logits"]
@@ -502,12 +494,14 @@ def start_training(cfg):
             total_correct += (preds == batch["labels"]).sum()
             total_preds += len(preds)
         elif flag_prtr == 0:
-            loss = outputs
+            loss = outputs["loss"].mean()
+            logits = outputs["logits"]
+            preds = logits.argmax(dim=-1)
+            total_correct += (preds == batch["labels"]).sum()
+            total_preds += len(preds)
             
         running_loss(loss.item())
-
         loss.backward()
-        optimizer.step()
 
         # optimizer
         if (step + 1) % cfg.gradient_accumulation_steps == 0:
@@ -518,25 +512,9 @@ def start_training(cfg):
             n_epoch = int(1. * total_train_batch_size * global_step
                           / total_n_examples)
             # learning rate scheduling transformer
-            lr_this_step_transformer = get_lr_sched(
-                global_step, cfg.decay, cfg.learning_rate,
-                cfg.num_train_steps, warmup_ratio=cfg.warmup_ratio,
-                decay_epochs=cfg.step_decay_epochs, multi_step_epoch=n_epoch)
 
             # Hardcoded param group length
             # assert len(optimizer.param_groups) == 8
-            for pg_n, param_group in enumerate(
-                    optimizer.param_groups):
-                if pg_n in [0, 1]:
-                    param_group['lr'] = lr_this_step_transformer
-                elif pg_n in [2, 3]:
-                    param_group['lr'] = lr_this_step_transformer
-                else:
-                    param_group['lr'] = lr_this_step_transformer
-            TB_LOGGER.add_scalar(
-                "train/lr_transformer", lr_this_step_transformer,
-                global_step)
-            TB_LOGGER.add_scalar('train/loss', running_loss.val, global_step)
 
             # update model params
             if cfg.grad_norm != -1:
@@ -552,7 +530,6 @@ def start_training(cfg):
                 p[0] for p in model.named_parameters()
                 if p[1].requires_grad and p[1].grad is None]
 
-            assert len(none_grads) == 0, f"{none_grads}"
             optimizer.step()
             optimizer.zero_grad()
             restorer.step()

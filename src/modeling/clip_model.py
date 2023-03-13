@@ -22,7 +22,7 @@ class CLIPModelforFinetune(nn.Module):
             
             txt_inputs = {'input_ids': batch['text_input_ids'], \
                             'attention_mask': batch['text_attention_mask']}
-            logits, loss = self.VLModel(
+            logits = self.VLModel(
                                 txt_inputs=txt_inputs,
                                 vis_inputs=vis_inputs,
                                 video_start_end=batch['video_start_end'],
@@ -32,18 +32,23 @@ class CLIPModelforFinetune(nn.Module):
             return dict(logits=logits, loss=loss)
 
         elif 'blip' in self.config.pretrained_model:
-            inputs = {
-                'pixel_values': batch['visual_inputs'],
-                'input_ids': batch['text_input_ids'],
-                'attention_mask': batch['text_attention_mask'],
-                'labels': batch['labels'],
-                'decoder_attention_mask': batch['decoder_attention_mask']
-            }
-            outputs = self.VLModel(inputs)
-            if self.training:
-                return outputs.loss
-            else:
-                return outputs
+            # inputs = {
+            #     'pixel_values': batch['visual_inputs'],
+            #     'input_ids': batch['text_input_ids'],
+            #     'attention_mask': batch['text_attention_mask'],
+                # 'labels': batch['labels'],
+                # 'decoder_attention_mask': batch['decoder_attention_mask']
+            # }
+            vis_inputs = {'pixel_values': batch['visual_inputs']}
+            txt_inputs = {'input_ids': batch['text_input_ids'], \
+                            'attention_mask': batch['text_attention_mask']}
+            logits = self.VLModel(txt_inputs, vis_inputs)
+            # if self.training:
+            #     return outputs.loss
+            # else:
+            #     return outputs
+            logits, loss = self.calc_loss(logits, batch['labels'])
+            return dict(logits=logits, loss=loss)
 
     def calc_loss(self, logits, labels):
         if labels is not None:
