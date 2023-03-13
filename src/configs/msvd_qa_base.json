@@ -19,7 +19,7 @@
     "vis_output_size": 768,
     "num_labels": 1000,
     "hidden_dropout_prob": 0.1,
-    "pretrained_model": "Salesforce/blip-vqa-base",
+    "pretrained_model": "Salesforce/blip-image-captioning-base",
     "freeze": false
   }
   ,
@@ -48,7 +48,7 @@
   "weight_decay": 1e-3,
   "decay": "multi_step",
   "step_decay_epochs": [15, 30, 45],
-  "optim": "AdamW",
+  "optim": "Adam",
   "betas": [0.9, 0.999],
   "dropout": 0.1,
   "grad_norm": 5.0,

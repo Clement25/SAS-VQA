@@ -3,14 +3,14 @@
     {
       "name": "msvd_qa",
       "txt": "/data/henry/msvd_qa/annotations/qa_train.json",
-      "img": "/data/henry/msvd_qa/processed/msvd_qa_video_feat.h5"
+      "img": "/data/henry/msvd_qa/processed_K4W10/msvd_qa_video_feat.h5"
     }
   ],
   "val_datasets": [
     {
       "name": "msvd_qa",
       "txt": "/data/henry/msvd_qa/annotations/qa_val.json",
-      "img": "/data/henry/msvd_qa/processed/msvd_qa_video_feat.h5"
+      "img": "/data/henry/msvd_qa/processed_K4W10/msvd_qa_video_feat.h5"
     }
   ],
   "model": 
@@ -24,11 +24,10 @@
   }
   ,
   "inference_txt_db": "/data/henry/msvd_qa/annotations/qa_test.json",
-  "inference_img_db": "/data/henry/msvd_qa/processed/msvd_qa_video_feat.h5",
-  "vid_mapping": "/data/henry/msvd_qa/processed/vidmapping.json",
+  "inference_img_db": "/data/henry/msvd_qa/processed_K4W10/msvd_qa_video_feat.h5",
+  "vid_mapping": "/data/henry/msvd_qa/processed_K4W10/vidmapping.json",
   "ans2label_path": "/txt/msvd_qa/train_ans2label.json",
-  "max_txt_len": 100,
-  "max_img_size": 448,
+  "img_size": 224,
   "img_pixel_mean": [123.675, 116.28, 103.53],
   "img_pixel_std": [1.0, 1.0, 1.0],
   "img_input_format": "BGR",
@@ -37,7 +36,7 @@
   "bert_weights_path": null,
   "output_dir": "saved_models/msvd_qa_003",
   "nframe": 4,
-  "samp_policy": "uniform",
+  "samp_policy": "single",
   "max_n_example_per_group": 1,
   "train_batch_size": 8,
   "gradient_accumulation_steps": 4,
@@ -47,8 +46,10 @@
   "num_valid": 30,
   "learning_rate": 1e-5,
   "weight_decay": 1e-3,
-  "decay": "constant",
-  "optim": "adamw",
+  "decay": "multi_step",
+  "optim": "AdamW",
+  "step_decay_epochs": [15, 30, 45],
+  "gamma": 0.5,
   "betas": [0.9, 0.999],
   "dropout": 0.1,
   "grad_norm": 5.0,

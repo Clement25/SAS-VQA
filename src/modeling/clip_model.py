@@ -42,7 +42,7 @@ class CLIPModelforFinetune(nn.Module):
             vis_inputs = {'pixel_values': batch['visual_inputs']}
             txt_inputs = {'input_ids': batch['text_input_ids'], \
                             'attention_mask': batch['text_attention_mask']}
-            logits = self.VLModel(txt_inputs, vis_inputs)
+            logits = self.VLModel(txt_inputs, vis_inputs, video_start_end=batch['video_start_end'])
             # if self.training:
             #     return outputs.loss
             # else:

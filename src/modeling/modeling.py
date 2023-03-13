@@ -206,7 +206,6 @@ class BLIPBaseModel(nn.Module):
         self.config = config
         self.vis_model = BlipVisionModel.from_pretrained(config.pretrained_model)
         self.txt_model = BlipTextModel.from_pretrained(config.pretrained_model)
-        self.classifier = nn.Linear(config.txt_output_size, config.num_labels)
 
     def forward(self, txt_inputs, vis_inputs):
         r"""Modified from BertModel
@@ -217,15 +216,7 @@ class BLIPBaseModel(nn.Module):
         vis_out = self.vis_model(**vis_inputs)
         txt_out = self.txt_model(**txt_inputs, 
             encoder_hidden_states=vis_out.last_hidden_state)
-        outputs = self.classifier(txt_out.pooler_output)
-        # return dict(txt_out=txt_out, vis_out=vis_out, txt_attn_mask=txt_inputs["attention_mask"])
-        # if self.training:
-        #     outputs = self.blip(**inputs)
-        # else:
-        #     inputs.pop('labels')
-        #     inputs.pop('decoder_attention_mask')
-        #     outputs = self.blip.generate(**inputs)
-        return outputs
+        return dict(txt_out=txt_out, vis_out=vis_out, txt_attn_mask=txt_inputs['attention_mask'])
 
 def instance_bce_with_logits(logits, labels, reduction="mean"):
     assert logits.dim() == 2
@@ -304,7 +295,7 @@ class CLIPForSeqClassification(nn.Module):
         )
         self.classifier = nn.Linear(config.txt_output_size, config.num_labels)
 
-    def forward(self, txt_inputs, vis_inputs, video_start_end, repeat_counts=None):
+    def forward(self, txt_inputs, vis_inputs, video_start_end, repeat_counts=None, **kwargs):
         outputs = self.vlm(
             txt_inputs=txt_inputs,
             vis_inputs=vis_inputs,

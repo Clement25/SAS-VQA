@@ -240,7 +240,7 @@ def setup_model(cfg, device=None):
     if 'clip' in cfg.model.pretrained_model.lower():
         vlm_model_cls = CLIPForSeqClassification
     elif 'blip' in cfg.model.pretrained_model.lower():
-        vlm_model_cls = BLIPBaseModel
+        vlm_model_cls = CLIPForSeqClassification
 
     # we separate the CNN and the transformer in order to use different optimizer for each
     # transformer still has a CNN layer inside, used to down sample grid.

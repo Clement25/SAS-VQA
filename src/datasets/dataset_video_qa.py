@@ -203,8 +203,11 @@ class VideoQACollator(BaseQACollator):
             inds = torch.multinomial(rand_sample, num_samples=self.nframe, replacement=False)
             vinds = torch.arange(bsz).unsqueeze(-1).expand(bsz, inds.size(-1))
             visual_inputs = visual_inputs[vinds,inds]
+        elif self.samp_policy == 'single':
+            i = orig_l//2
+            visual_inputs = visual_inputs[:, i:i+1]
         else:
-            raise ValueError("Sample strategy can only be chosen from ['uniform', 'random']")
+            raise ValueError("Sample strategy can only be chosen from ['uniform', 'random', 'single']")
         B, L, _ = visual_inputs.size()
         # assert L == self.nframe
         visual_inputs = visual_inputs.reshape(B*L, 3, self.img_size, self.img_size)
@@ -296,7 +299,7 @@ class BLIPVideoQACollator(BaseQACollator):
             question_ids=question_ids,
             video_start_end=video_start_end,
             # labels=labels.input_ids if labels is not None else None,
-            # decoder_attention_mask=labels.attention_mask if labels is not None else None,
+            # decoder_attention_mask=labels.attention_mask if labels is not None else None4,
             labels=labels,
             n_examples_list=n_examples_list  # used to create image feature copies.
         )
