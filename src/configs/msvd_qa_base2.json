@@ -26,7 +26,7 @@
   "inference_txt_db": "/data/henry/msvd_qa/annotations/qa_test.json",
   "inference_img_db": "/data/henry/msvd_qa/processed/msvd_qa_video_feat.h5",
   "vid_mapping": "/data/henry/msvd_qa/processed/vidmapping.json",
-  "ans2label_path": "/txt/msrvtt_qa/train_ans2label.json",
+  "ans2label_path": "/txt/msvd/train_ans2label.json",
   "img_size": 384,
   "img_pixel_mean": [123.675, 116.28, 103.53],
   "img_pixel_std": [1.0, 1.0, 1.0],

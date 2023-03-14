@@ -411,6 +411,7 @@ def start_training(cfg):
         ans2label = build_common_answer_dict(anno_files, 1000)
     elif 'clip' in cfg.model.pretrained_model.lower():
         flag_prtr = 1
+        ans2label = None
 
     # prepare data
     if cfg.task in ['msvd_qa', 'msrvtt_qa']:
@@ -532,7 +533,7 @@ def start_training(cfg):
 
             optimizer.step()
             optimizer.zero_grad()
-            restorer.step()
+            # restorer.step()
             pbar.update(1)
 
             # checkpoint

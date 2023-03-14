@@ -47,7 +47,7 @@
   "learning_rate": 1e-5,
   "weight_decay": 1e-3,
   "decay": "multi_step",
-  "optim": "AdamW",
+  "optim": "Adam",
   "step_decay_epochs": [15, 30, 45],
   "gamma": 0.5,
   "betas": [0.9, 0.999],
