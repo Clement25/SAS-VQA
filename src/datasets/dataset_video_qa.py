@@ -303,3 +303,81 @@ class BLIPVideoQACollator(BaseQACollator):
             labels=labels,
             n_examples_list=n_examples_list  # used to create image feature copies.
         )
+
+class GITVideoQACollator(BaseQACollator):
+    def __init__(self, processor, max_length=20, task_type="action", n_options=5, nframe=4, samp_policy='random', img_size=384):
+        super(GITVideoQACollator, self).__init__(
+            max_length=max_length, task_type=task_type,
+            n_options=n_options, nframe=nframe, samp_policy=samp_policy, img_size=img_size
+        )
+        self.processor = processor
+
+    def collate_batch(self, batch):
+        v_collate = default_collate
+        visual_inputs = v_collate([d["vid"] for d in batch])  # (B, T, 3, H, W)
+        # group data
+        text_examples = flat_list_of_lists([d["examples"] for d in batch])
+        n_examples_list = [d["n_examples"] for d in batch]  # (B, )
+        # group elements data
+        # directly concatenate question and option as a single seq.
+        if self.task_type in ["action", "transition"]:
+            text_str_list = flat_list_of_lists(
+                [[d["q_str"] + " " + d["options_str_list"][i] for i in range(self.n_options)]
+                 for d in text_examples]
+            )  # (B * n_options, )
+        else:
+            text_str_list = [d["q_str"] for d in text_examples]  # (B, )
+            
+        bsz, orig_l, _ = visual_inputs.size()
+        if self.samp_policy == 'uniform':
+            T = orig_l // self.nframe + (1 if orig_l % self.nframe > 0 else 0)
+            inds = [int(i*self.nframe) for i in range(T)]
+            visual_inputs = visual_inputs[:,inds]
+        elif self.samp_policy == 'random':
+            rand_sample = torch.arange(orig_l).float().expand(bsz, -1)
+            inds = torch.multinomial(rand_sample, num_samples=self.nframe, replacement=False)
+            vinds = torch.arange(bsz).unsqueeze(-1).expand(bsz, inds.size(-1))
+            visual_inputs = visual_inputs[vinds,inds]
+        elif self.samp_policy == 'single':
+            i = orig_l // 2
+            visual_inputs = visual_inputs[:, i:i+1]
+        else:
+            raise ValueError("Sample strategy can only be chosen from ['uniform', 'random']")
+        
+        # FIXME: only impl single here
+        batch_enc = self.processor(text=text_str_list, padding = True, 
+                                   truncation = True, return_tensors='pt')
+        text_input_ids = batch_enc.input_ids  # (B, L)
+        text_attention_mask = batch_enc.attention_mask  # (B, L)
+        
+        B, L, _ = visual_inputs.size()
+        # assert L == self.nframe
+        visual_inputs = visual_inputs.reshape(B*L, 3, self.img_size, self.img_size)
+        video_lengths = [L] * B
+        
+        video_start_end = [0]
+        for l in video_lengths:
+            video_start_end.append(video_start_end[-1] + l)
+
+        # entire seq: question + ans
+        Q_only = self.processor(text=[d['q_str'] for d in text_examples], padding='longest', return_tensors='pt')
+        Q_lens = Q_only['attention_mask'].sum(-1, True)  # (B, 1)
+        QandA = self.processor(text=[d['q_str'] + d['str_label'] for d in text_examples], padding='longest', return_tensors='pt') if 'str_label' in text_examples[0] else None
+        # labels = default_collate([int(d["label"]) for d in text_examples]) \
+            # if text_examples[0]["label"] is not None else None  # (B, #ans)
+        input_ids = QandA.input_ids
+        B, L = input_ids.size()
+        Q_filling_mask = torch.arange(L).repeat(B, 1).to(input_ids.device) < Q_lens - 1
+        question_ids = [d["question_id"] for d in text_examples]
+        
+        labels = input_ids.masked_fill(Q_filling_mask, -100)
+        
+        return dict(
+            visual_inputs=visual_inputs,  # (B * #frm, C, H, W)
+            text_input_ids=text_input_ids,
+            text_attention_mask=text_attention_mask,
+            question_ids=question_ids,
+            video_start_end=video_start_end,
+            labels=labels,
+            n_examples_list=n_examples_list  # used to create image feature copies.
+        )

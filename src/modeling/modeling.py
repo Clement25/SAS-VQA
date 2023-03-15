@@ -7,8 +7,7 @@ from torch import nn
 import torch.nn.functional as F
 
 from transformers import CLIPTextModel, CLIPVisionModelWithProjection
-from transformers import BlipForQuestionAnswering, BlipVisionModel, BlipTextModel
-from apex.normalization.fused_layer_norm import FusedLayerNorm as LayerNorm
+from transformers import BlipForQuestionAnswering, BlipVisionModel, BlipTextModel,GitForCausalLM
 
 
 def get_random_sample_indices(
@@ -31,8 +30,6 @@ def get_random_sample_indices(
             seq_len, size=num_samples, replace=False)
         sample_indices = np.sort(sample_indices)
     return torch.from_numpy(sample_indices).long().to(device)
-
-BertLayerNorm = LayerNorm
 
 class VisualInputEmbedding(nn.Module):
     """
@@ -184,23 +181,6 @@ class CLIPBaseModel(nn.Module):
         return dict(txt_out=txt_out, vis_out=vis_out, txt_attn_mask=txt_inputs["attention_mask"])
 
 class BLIPBaseModel(nn.Module):
-    """
-
-    The model can behave as an encoder (with only self-attention) as well
-    as a decoder, in which case a layer of cross-attention is added between
-    the self-attention layers, following the architecture described in `Attention is all you need`_ by Ashish Vaswani,
-    Noam Shazeer, Niki Parmar, Jakob Uszkoreit, Llion Jones, Aidan N. Gomez, Lukasz Kaiser and Illia Polosukhin.
-
-    To behave as an decoder the model needs to be initialized with the
-    :obj:`is_decoder` argument of the configuration set to :obj:`True`; an
-    :obj:`encoder_hidden_states` is expected as an input to the forward pass.
-
-    .. _`Attention is all you need`:
-        https://arxiv.org/abs/1706.03762
-
-    config keys:
-        clip_config: str, text model name, default "openai/clip-vit-base-path-32"
-    """
     def __init__(self, config):
         super().__init__()
         self.config = config
@@ -217,6 +197,25 @@ class BLIPBaseModel(nn.Module):
         txt_out = self.txt_model(**txt_inputs, 
             encoder_hidden_states=vis_out.last_hidden_state)
         return dict(txt_out=txt_out, vis_out=vis_out, txt_attn_mask=txt_inputs['attention_mask'])
+
+class GITBaseModel(nn.Module):
+    def __init__(self, config):
+        super().__init__()
+        self.config = config
+        self.model = GitForCausalLM.from_pretrained(config.pretrained_model)
+
+    def forward(self, inputs):
+        r"""Modified from BertModel
+        text_input_ids: (B, Lt)
+        visual_inputs: (B * #frame, C, H, W)
+        attention_mask: (B, Lt)  with 1 indicates valid, 0 indicates invalid position.
+        """
+        if self.training:
+            out = self.model(**inputs)
+        else:
+            inputs.pop('labels')
+            out = self.model.generate()
+        return out
 
 def instance_bce_with_logits(logits, labels, reduction="mean"):
     assert logits.dim() == 2

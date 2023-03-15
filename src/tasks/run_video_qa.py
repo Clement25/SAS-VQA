@@ -7,9 +7,9 @@ from transformers import AutoTokenizer, AutoProcessor
 
 import sys
 sys.path.append('..')
-from src.modeling.modeling import CLIPForSeqClassification, BLIPBaseModel
+from src.modeling.modeling import CLIPForSeqClassification, BLIPBaseModel, GITBaseModel
 from src.modeling.clip_model import CLIPModelforFinetune
-from src.datasets.dataset_video_qa import VideoQADataset, VideoQACollator, BLIPVideoQACollator
+from src.datasets.dataset_video_qa import VideoQADataset, VideoQACollator, BLIPVideoQACollator, GITVideoQACollator
 from src.datasets.dataloader import InfiniteIterator, PrefetchLoader
 from src.datasets.data_utils import ImageNorm, mk_input_group
 from torch.utils.data import DataLoader
@@ -29,10 +29,7 @@ from torch.optim.lr_scheduler import MultiStepLR
 from tqdm import tqdm
 from os.path import join
 from collections import Counter
-from apex import amp
 from torch.utils.data.distributed import DistributedSampler
-import horovod.torch as hvd
-from src.utils.distributed import all_gather_list
 from collections import defaultdict
 
 
@@ -170,6 +167,13 @@ def mk_tgif_qa_dataloader(task_type, anno_path, ans2label, img_hdf5_dir, cfg, to
                                     nframe=cfg.nframe,
                                     samp_policy=cfg.samp_policy,
                                     img_size=cfg.img_size)
+    elif 'git' in cfg.model.pretrained_model.lower():
+        vqa_collator = GITVideoQACollator(processor=tokenizer,
+                                    max_length=cfg.max_txt_len,
+                                    task_type=cfg.task,
+                                    nframe=cfg.nframe,
+                                    samp_policy=cfg.samp_policy,
+                                    img_size=cfg.img_size)   
     dataloader = DataLoader(dataset,
                             batch_size=batch_size,
                             shuffle=is_train,
@@ -241,6 +245,8 @@ def setup_model(cfg, device=None):
         vlm_model_cls = CLIPForSeqClassification
     elif 'blip' in cfg.model.pretrained_model.lower():
         vlm_model_cls = CLIPForSeqClassification
+    elif 'git' in cfg.model.pretrained_model.lower():
+        vlm_model_cls = GITBaseModel
 
     # we separate the CNN and the transformer in order to use different optimizer for each
     # transformer still has a CNN layer inside, used to down sample grid.
@@ -306,10 +312,10 @@ def validate(model, val_loader, cfg, eval_score=True, processor=None, ans2label=
                 outputs["loss"], torch.Tensor) else 0
             losses.append(_loss)
             pred_labels = logits.argmax(dim=-1).tolist()
-        # elif flag_prtr == 0:
+        elif flag_prtr == 2:
             # mapback to task-specific vocabulary ids
-            # pred_labels_str = processor.batch_decode(outputs, skip_special_tokens=True)
-            # pred_labels = [ans2label.get(w, -1) for w in pred_labels_str]
+            pred_labels_str = processor.batch_decode(outputs, skip_special_tokens=True)
+            pred_labels = [ans2label.get(w, -1) for w in pred_labels_str]
             
         for qid, pred_label in zip(question_ids, pred_labels):
             qa_results.append(dict(
@@ -351,25 +357,6 @@ def validate(model, val_loader, cfg, eval_score=True, processor=None, ans2label=
             if "ratio" in scores_k:
                 continue
             
-        #     curr_acc, curr_n_ex = 0, 0
-        #     if "overall" in scores_k:
-        #         curr_acc = scores_per_rank[scores_k] * n
-        #     else:
-        #         if "ratios" in scores_per_rank:
-        #             curr_n_ex = scores_per_rank["ratios"][
-        #                         scores_k.replace("acc", "ratio")][1]
-        #             curr_acc = scores_per_rank[
-        #                 scores_k] * curr_n_ex
-
-        #     gathered_v += curr_acc
-        #     if "overall" in scores_k:
-        #         gathered_v = gathered_v * 1. / n_ex
-        #     else:
-        #         if "ratios" in scores_per_rank:
-        #             _num = gathered_ratios[
-        #                 scores_k.replace("acc", "ratio")][1]
-        #             gathered_v = gathered_v * 1. / _num if _num != 0 else 0
-                    
             if cfg.task in ["action", "transition", "msvd_qa", "frameqa", "msrvtt_qa"]:
                 gathered_scores[scores_k] = get_rounded_percentage(
                     gathered_v)
@@ -406,18 +393,21 @@ def start_training(cfg):
 
     if 'blip' in cfg.model.pretrained_model.lower():
         flag_prtr = 0
-        # rebuild the ans2label dict
         anno_files = (cfg.train_datasets[0].txt,)
         ans2label = build_common_answer_dict(anno_files, 1000)
     elif 'clip' in cfg.model.pretrained_model.lower():
         flag_prtr = 1
         ans2label = None
+    elif 'git' in cfg.model.pretrained_model.lower():
+        flag_prtr = 2
+        anno_files = (cfg.train_datasets[0].txt,)
+        ans2label = build_common_answer_dict(anno_files, 1000)
 
     # prepare data
     if cfg.task in ['msvd_qa', 'msrvtt_qa']:
         if flag_prtr == 1:
             tokenizer = AutoTokenizer.from_pretrained(cfg.model.pretrained_model)
-        elif flag_prtr == 0:
+        elif flag_prtr in [0, 2]:
             tokenizer = AutoProcessor.from_pretrained(cfg.model.pretrained_model)
     else:
         raise ValueError
@@ -465,10 +455,6 @@ def start_training(cfg):
     LOGGER.info("Starting training...")
     LOGGER.info(f"***** Running training with {n_gpu} GPUs *****")
     LOGGER.info(f"  Single-GPU Non-Accumulated batch size = {cfg.train_batch_size}")
-    # LOGGER.info(f"  max_n_example_per_group = {cfg.max_n_example_per_group}")
-    # LOGGER.info(f"  Accumulate steps = {cfg.gradient_accumulation_steps}")
-    # LOGGER.info(f"  Total batch size = #GPUs * Single-GPU batch size * "
-                # f"max_n_example_per_group * Accumulate steps [Image] = {total_train_batch_size}")
     LOGGER.info(f"  Total #epochs = {cfg.num_train_epochs}")
     LOGGER.info(f"  Total #steps = {cfg.num_train_steps}")
     LOGGER.info(f"  Validate every {cfg.valid_steps} steps, in total {actual_num_valid} times")
@@ -512,16 +498,10 @@ def start_training(cfg):
             # learning rate scheduling
             n_epoch = int(1. * total_train_batch_size * global_step
                           / total_n_examples)
-            # learning rate scheduling transformer
-
-            # Hardcoded param group length
-            # assert len(optimizer.param_groups) == 8
 
             # update model params
             if cfg.grad_norm != -1:
-                grad_norm = clip_grad_norm_(
-                    amp.master_params(optimizer),
-                    cfg.grad_norm)
+                grad_norm = torch.nn.utils.clip_grad_norm_(optimizer.params, max_norm=cfg.grad_norm)
                 TB_LOGGER.add_scalar(
                     "train/grad_norm", grad_norm, global_step)
             TB_LOGGER.step()
@@ -530,6 +510,8 @@ def start_training(cfg):
             none_grads = [
                 p[0] for p in model.named_parameters()
                 if p[1].requires_grad and p[1].grad is None]
+            print(none_grads)
+            assert len(none_grads) == 0
 
             optimizer.step()
             optimizer.zero_grad()
@@ -556,111 +538,10 @@ def start_training(cfg):
         if cfg.debug and global_step >= debug_step:
             break
 
-def start_inference(cfg):
-    set_random_seed(cfg.seed)
-    n_gpu = hvd.size()
-    device = torch.device("cuda", hvd.local_rank())
-    torch.cuda.set_device(hvd.local_rank())
-    if hvd.rank() != 0:
-        LOGGER.disabled = True
-
-    inference_res_dir = join(
-        cfg.output_dir,
-        f"results_{os.path.splitext(os.path.basename(cfg.inference_txt_db))[0]}/"
-        f"step_{cfg.inference_model_step}_{cfg.inference_n_clips}_{cfg.score_agg_func}"
-    )
-
-    if hvd.rank() == 0:
-        os.makedirs(inference_res_dir, exist_ok=True)
-        save_json(cfg, join(inference_res_dir, "raw_args.json"),
-                  save_pretty=True)
-
-    LOGGER.info("device: {} n_gpu: {}, rank: {}, "
-                "16-bits training: {}".format(
-                    device, n_gpu, hvd.rank(), bool(cfg.fp16)))
-
-    # setup models
-    cfg.model_config = join(cfg.output_dir, "log/model_config.json")
-    e2e_weights_path = join(
-        cfg.output_dir, f"ckpt/model_step_{cfg.inference_model_step}.pt")
-    cfg.e2e_weights_path = e2e_weights_path
-    model = setup_model(cfg, device=device)
-    
-    # restore
-    save_path = f'{cfg.output_dir}/restore.pt'
-    checkpoint = torch.load(save_path)
-    model.load_state_dict(checkpoint['model_state_dict'])
-    model.cuda().eval()
-
-    global_step = 0
-    ans2label = build_common_answer_dict(anno_files=(cfg.train_datasets[0].txt, cfg.val_datasets[0].txt))
-    # prepare data
-    tokenizer = AutoTokenizer.from_pretrained(cfg.model.pretrained_model)
-    cfg.data_ratio = 1.
-    val_loader = mk_tgif_qa_dataloader(
-        task_type=cfg.task,
-        anno_path=cfg.inference_txt_db,
-        ans2label=ans2label,
-        img_hdf5_dir=cfg.inference_img_db,
-        cfg=cfg, tokenizer=tokenizer,
-        is_train=False,
-        return_label=False
-    )
-
-    LOGGER.info(cfg)
-    LOGGER.info("Starting inference...")
-    LOGGER.info(f"***** Running inference with {n_gpu} GPUs *****")
-    LOGGER.info(f"  Batch size = {cfg.inference_batch_size}")
-
-    LOGGER.info(f'Step {global_step}: start validation')
-    qa_results, qa_scores = validate(
-        model, val_loader, cfg, 
-        eval_score=True)  # cfg.inference_split == "val"
-
-    if hvd.rank() == 0:
-        save_json(cfg, join(inference_res_dir, "merged_args.json"),
-                  save_pretty=True)
-        save_json(qa_scores, join(inference_res_dir, "scores.json"),
-                  save_pretty=True)
-
-    # ###### Saving with Horovod ####################
-    # dummy sync
-    _ = None
-    all_gather_list(_)
-    if n_gpu > 1:
-        # with retrial, as azure blob fails occasionally.
-        max_save_load_trial = 10
-        save_trial = 0
-        while save_trial < max_save_load_trial:
-            try:
-                LOGGER.info(f"Save results trial NO. {save_trial}")
-                save_json(
-                    qa_results,
-                    join(inference_res_dir, f"results_rank{hvd.rank()}.json"))
-                break
-            except Exception as e:
-                save_trial += 1
-    # dummy sync
-    _ = None
-    all_gather_list(_)
-    # join results
-    if n_gpu > 1 and hvd.rank() == 0:
-        qa_results = []
-        for rk in range(n_gpu):
-            qa_results.extend(load_json(
-                join(inference_res_dir, f"results_rank{rk}.json")))
-        LOGGER.info(f'results joined')
-
-    if hvd.rank() == 0:
-        save_json(
-            qa_results,
-            join(inference_res_dir, f"results_all.json"))
-        LOGGER.info(f'all results written')
-
 if __name__ == '__main__':
     # Initialize Horovod
     input_cfg = shared_configs.get_video_qa_args()
     if input_cfg.do_inference:
-        start_inference(input_cfg)
+        pass
     else:
         start_training(input_cfg)

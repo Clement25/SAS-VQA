@@ -1,8 +1,5 @@
 import torch
 import random
-import torchvision.transforms as transforms
-from torchvision.transforms.functional import pad as img_pad
-from torchvision.transforms.functional import resize as img_resize
 from torch.nn.functional import interpolate as img_tensor_resize
 from torch.nn.functional import pad as img_tensor_pad
 from torch.nn.modules.utils import _quadruple

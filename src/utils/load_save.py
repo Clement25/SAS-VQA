@@ -5,7 +5,6 @@ import json
 import os
 from os.path import dirname, exists, join, realpath
 import subprocess
-from apex import amp
 from easydict import EasyDict as edict
 
 import torch
@@ -184,7 +183,7 @@ class TrainingRestorer(object):
         self.backup_path = f'{opts.output_dir}/restore_backup.pt'
         self.ckpt_dict = ckpt_dict
         self.save_steps = opts.save_steps
-        self.amp = opts.fp16
+        # self.amp = opts.fp16
         # since saving to or loading from azure blob fails sometimes
         self.max_save_load_trial = 10
         if exists(self.save_path) or exists(self.backup_path):
@@ -218,8 +217,8 @@ class TrainingRestorer(object):
         checkpoint_to_save = {'global_step': self.global_step}
         for k in self.ckpt_dict:
             checkpoint_to_save[k] = _to_cpu(self.ckpt_dict[k].state_dict())
-        if self.amp:
-            checkpoint_to_save['amp_state_dict'] = amp.state_dict()
+        # if self.amp:
+        #     checkpoint_to_save['amp_state_dict'] = amp.state_dict()
         if exists(self.save_path):
             os.rename(self.save_path, self.backup_path)
         torch.save(checkpoint_to_save, self.save_path)
@@ -232,8 +231,8 @@ class TrainingRestorer(object):
         self.global_step = checkpoint['global_step']
         for k in self.ckpt_dict:
             self.ckpt_dict[k].load_state_dict(_to_cuda(checkpoint[k]))
-        if self.amp:
-            amp.load_state_dict(checkpoint['amp_state_dict'])
+        # if self.amp:
+        #     amp.load_state_dict(checkpoint['amp_state_dict'])
         LOGGER.info(f'resume training from step {self.global_step}')
 
 
@@ -253,7 +252,7 @@ class E2E_TrainingRestorer(object):
         
         self.optimizer = optimizer
         self.save_steps = int(opts.save_steps_ratio * opts.num_train_steps)
-        self.amp = opts.fp16
+        # self.amp = opts.fp16
         # since saving to or loading from azure blob fails sometimes
         self.max_save_load_trial = 10
         if exists(self.save_path) or exists(self.backup_path):
@@ -303,8 +302,8 @@ class E2E_TrainingRestorer(object):
         if self.optimizer:
             self.optimizer.load_state_dict(
                 _to_cuda(checkpoint['optim_state_dict']))
-        if self.amp:
-            amp.load_state_dict(checkpoint['amp_state_dict'])
+        # if self.amp:
+        #     amp.load_state_dict(checkpoint['amp_state_dict'])
         LOGGER.info(f'resume training from step {self.global_step}')
 
 

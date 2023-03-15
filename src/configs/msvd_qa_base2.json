@@ -3,14 +3,14 @@
     {
       "name": "msvd_qa",
       "txt": "/data/henry/msvd_qa/annotations/qa_train.json",
-      "img": "/data/henry/msvd_qa/processed/msvd_qa_video_feat.h5"
+      "img": "/data/henry/msvd_qa/processed_K4W10/msvd_qa_video_feat.h5"
     }
   ],
   "val_datasets": [
     {
       "name": "msvd_qa",
       "txt": "/data/henry/msvd_qa/annotations/qa_val.json",
-      "img": "/data/henry/msvd_qa/processed/msvd_qa_video_feat.h5"
+      "img": "/data/henry/msvd_qa/processed_K4W10/msvd_qa_video_feat.h5"
     }
   ],
   "model": 
@@ -19,15 +19,14 @@
     "vis_output_size": 768,
     "num_labels": 1000,
     "hidden_dropout_prob": 0.1,
-    "pretrained_model": "Salesforce/blip-vqa-base",
+    "pretrained_model": "microsoft/git-base-textvqa",
     "freeze": false
   }
   ,
   "inference_txt_db": "/data/henry/msvd_qa/annotations/qa_test.json",
-  "inference_img_db": "/data/henry/msvd_qa/processed/msvd_qa_video_feat.h5",
-  "vid_mapping": "/data/henry/msvd_qa/processed/vidmapping.json",
-  "ans2label_path": "/txt/msvd/train_ans2label.json",
-  "img_size": 384,
+  "inference_img_db": "/data/henry/msvd_qa/processed_K4W10/msvd_qa_video_feat.h5",
+  "vid_mapping": "/data/henry/msvd_qa/processed_K4W10/vidmapping.json",
+  "img_size": 224,
   "img_pixel_mean": [123.675, 116.28, 103.53],
   "img_pixel_std": [1.0, 1.0, 1.0],
   "img_input_format": "BGR",
@@ -42,13 +41,12 @@
   "gradient_accumulation_steps": 4,
   "val_batch_size": 16,
   "num_train_epochs": 15,
-  "min_valid_steps": 5,
+  "min_valid_steps": 50,
   "num_valid": 30,
   "learning_rate": 1e-5,
   "weight_decay": 1e-3,
-  "decay": "multi_step",
+  "optim": "Adam",
   "step_decay_epochs": [15, 30, 45],
-  "optim": "AdamW",
   "betas": [0.9, 0.999],
   "dropout": 0.1,
   "grad_norm": 5.0,

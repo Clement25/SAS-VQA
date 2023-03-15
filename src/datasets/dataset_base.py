@@ -5,8 +5,6 @@ import torch
 import numpy as np
 import h5py
 from src.datasets import decoder
-from src.datasets.data_utils import (
-    ImageResize, ImagePad, image_to_tensor)
 from src.utils.load_save import LOGGER
 
 
@@ -120,13 +118,13 @@ class BaseDataset(Dataset):
         raw_img = load_decompress_img_from_lmdb_value(
             self.txn.get(str(img_id).encode("utf-8"))
         )
-        image_np = np.array(raw_img, dtype=np.uint8)  # (h, w, c)
-        raw_img_tensor = image_to_tensor(
-            image_np, keepdim=False).float()  # (c, h, w) [0, 255]
-        resized_img = self.img_resize(raw_img_tensor)
-        transformed_img = self.img_pad(
-            resized_img)  # (n_frm=1, c, h, w)
-        return transformed_img
+        # image_np = np.array(raw_img, dtype=np.uint8)  # (h, w, c)
+        # raw_img_tensor = image_to_tensor(
+        #     image_np, keepdim=False).float()  # (c, h, w) [0, 255]
+        # resized_img = self.img_resize(raw_img_tensor)
+        # transformed_img = self.img_pad(
+        #     resized_img)  # (n_frm=1, c, h, w)
+        # return transformed_img
 
     @classmethod
     def _is_extreme_aspect_ratio(cls, tensor, max_ratio=5.):

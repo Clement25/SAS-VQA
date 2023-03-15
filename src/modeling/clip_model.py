@@ -1,5 +1,4 @@
 from torch import nn
-from src.datasets.data_utils import repeat_tensor_rows
 from src.utils.load_save import load_state_dict_with_mismatch
 from transformers import CLIPVisionModel, CLIPTextModel
 from torch.nn import CrossEntropyLoss, MSELoss
@@ -43,12 +42,22 @@ class CLIPModelforFinetune(nn.Module):
             txt_inputs = {'input_ids': batch['text_input_ids'], \
                             'attention_mask': batch['text_attention_mask']}
             logits = self.VLModel(txt_inputs, vis_inputs, video_start_end=batch['video_start_end'])
-            # if self.training:
-            #     return outputs.loss
-            # else:
-            #     return outputs
             logits, loss = self.calc_loss(logits, batch['labels'])
             return dict(logits=logits, loss=loss)
+        elif 'git' in self.config.pretrained_model: # generation style
+            inputs = {
+                'pixel_values': batch['visual_inputs'],
+                'input_ids': batch['text_input_ids'],
+                'attention_mask': batch['text_attention_mask'],
+                'labels': batch['labels'][:,:-1]
+            }
+            loss = generated_ids = None
+            out = self.VLModel(inputs)
+            if self.training:
+                loss = out.loss
+            else:
+                generated_ids = out
+            return dict(generated_ids=generated_ids, loss=loss)
 
     def calc_loss(self, logits, labels):
         if labels is not None:
