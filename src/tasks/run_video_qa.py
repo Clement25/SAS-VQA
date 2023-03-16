@@ -173,7 +173,7 @@ def mk_tgif_qa_dataloader(task_type, anno_path, ans2label, img_hdf5_dir, cfg, to
                                     task_type=cfg.task,
                                     nframe=cfg.nframe,
                                     samp_policy=cfg.samp_policy,
-                                    img_size=cfg.img_size)   
+                                    img_size=cfg.img_size)
     dataloader = DataLoader(dataset,
                             batch_size=batch_size,
                             shuffle=is_train,
@@ -214,7 +214,7 @@ def setup_dataloaders(cfg, tokenizer):
             anno_path=cfg.val_datasets[0].txt,
             ans2label=ans2label,
             img_hdf5_dir=cfg.train_datasets[0].img,
-            cfg=cfg, tokenizer=tokenizer, is_train=False, return_label=False
+            cfg=cfg, tokenizer=tokenizer, is_train=False, return_label=True
         )
         test_loader = mk_tgif_qa_dataloader(
             task_type=cfg.task,
@@ -223,7 +223,7 @@ def setup_dataloaders(cfg, tokenizer):
             img_hdf5_dir=cfg.inference_img_db,
             cfg=cfg, tokenizer=tokenizer,
             is_train=False,
-            return_label=False
+            return_label=True
         )
     else:
         raise ValueError
@@ -299,7 +299,6 @@ def validate(model, val_loader, cfg, eval_score=True, processor=None, ans2label=
 
         n_ex += len(question_ids)
         # multi-frame test, scores across frames of the same video will be pooled together
-        pool_method = cfg.score_agg_func
         # could be 1, where only a single clip is evaluated
         
         # (B * max(num_frm), C, H, W)
@@ -314,7 +313,7 @@ def validate(model, val_loader, cfg, eval_score=True, processor=None, ans2label=
             pred_labels = logits.argmax(dim=-1).tolist()
         elif flag_prtr == 2:
             # mapback to task-specific vocabulary ids
-            pred_labels_str = processor.batch_decode(outputs, skip_special_tokens=True)
+            pred_labels_str = processor.batch_decode(outputs["generated_ids"], skip_special_tokens=True)
             pred_labels = [ans2label.get(w, -1) for w in pred_labels_str]
             
         for qid, pred_label in zip(question_ids, pred_labels):
@@ -417,8 +416,9 @@ def start_training(cfg):
     model = setup_model(cfg, device=device)
     model.train()
 
+    all_params =  [p for p in model.parameters() if p.requires_grad]
     optimizer = getattr(torch.optim, cfg.optim)(
-        params = [p for p in model.parameters() if p.requires_grad], lr = cfg.learning_rate
+        params = all_params, lr = cfg.learning_rate
     )
     if cfg.decay == 'constant':
         scheduler = None 
@@ -486,6 +486,8 @@ def start_training(cfg):
             preds = logits.argmax(dim=-1)
             total_correct += (preds == batch["labels"]).sum()
             total_preds += len(preds)
+        elif flag_prtr == 2:
+            loss = outputs["loss"].mean()
             
         running_loss(loss.item())
         loss.backward()
@@ -501,7 +503,7 @@ def start_training(cfg):
 
             # update model params
             if cfg.grad_norm != -1:
-                grad_norm = torch.nn.utils.clip_grad_norm_(optimizer.params, max_norm=cfg.grad_norm)
+                grad_norm = torch.nn.utils.clip_grad_norm_(all_params, max_norm=cfg.grad_norm)
                 TB_LOGGER.add_scalar(
                     "train/grad_norm", grad_norm, global_step)
             TB_LOGGER.step()
@@ -510,7 +512,6 @@ def start_training(cfg):
             none_grads = [
                 p[0] for p in model.named_parameters()
                 if p[1].requires_grad and p[1].grad is None]
-            print(none_grads)
             assert len(none_grads) == 0
 
             optimizer.step()

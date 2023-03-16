@@ -49,7 +49,7 @@ class CLIPModelforFinetune(nn.Module):
                 'pixel_values': batch['visual_inputs'],
                 'input_ids': batch['text_input_ids'],
                 'attention_mask': batch['text_attention_mask'],
-                'labels': batch['labels'][:,:-1]
+                'labels': batch['labels']
             }
             loss = generated_ids = None
             out = self.VLModel(inputs)

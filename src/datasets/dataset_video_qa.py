@@ -305,12 +305,13 @@ class BLIPVideoQACollator(BaseQACollator):
         )
 
 class GITVideoQACollator(BaseQACollator):
-    def __init__(self, processor, max_length=20, task_type="action", n_options=5, nframe=4, samp_policy='random', img_size=384):
+    def __init__(self, processor, max_length=20, task_type="action", n_options=5, nframe=4, samp_policy='random', img_size=384, add_ans=True):
         super(GITVideoQACollator, self).__init__(
             max_length=max_length, task_type=task_type,
             n_options=n_options, nframe=nframe, samp_policy=samp_policy, img_size=img_size
         )
         self.processor = processor
+        self.add_ans = add_ans
 
     def collate_batch(self, batch):
         v_collate = default_collate
@@ -345,10 +346,9 @@ class GITVideoQACollator(BaseQACollator):
             raise ValueError("Sample strategy can only be chosen from ['uniform', 'random']")
         
         # FIXME: only impl single here
-        batch_enc = self.processor(text=text_str_list, padding = True, 
-                                   truncation = True, return_tensors='pt')
-        text_input_ids = batch_enc.input_ids  # (B, L)
-        text_attention_mask = batch_enc.attention_mask  # (B, L)
+        # batch_enc = self.processor(text=text_str_list, padding = True, 
+        #                            truncation = True, return_tensors='pt')
+        # text_attention_mask = batch_enc.attention_mask
         
         B, L, _ = visual_inputs.size()
         # assert L == self.nframe
@@ -362,19 +362,20 @@ class GITVideoQACollator(BaseQACollator):
         # entire seq: question + ans
         Q_only = self.processor(text=[d['q_str'] for d in text_examples], padding='longest', return_tensors='pt')
         Q_lens = Q_only['attention_mask'].sum(-1, True)  # (B, 1)
-        QandA = self.processor(text=[d['q_str'] + d['str_label'] for d in text_examples], padding='longest', return_tensors='pt') if 'str_label' in text_examples[0] else None
-        # labels = default_collate([int(d["label"]) for d in text_examples]) \
-            # if text_examples[0]["label"] is not None else None  # (B, #ans)
-        input_ids = QandA.input_ids
+        
+        QandA = self.processor(text=[d['q_str'] + d['str_label'] for d in text_examples], padding='longest', return_tensors='pt')
+        input_ids, text_attention_mask = QandA.input_ids, QandA.attention_mask
+        
         B, L = input_ids.size()
         Q_filling_mask = torch.arange(L).repeat(B, 1).to(input_ids.device) < Q_lens - 1
         question_ids = [d["question_id"] for d in text_examples]
-        
         labels = input_ids.masked_fill(Q_filling_mask, -100)
+        
+        assert labels.size() == input_ids.size()
         
         return dict(
             visual_inputs=visual_inputs,  # (B * #frm, C, H, W)
-            text_input_ids=text_input_ids,
+            text_input_ids=input_ids,
             text_attention_mask=text_attention_mask,
             question_ids=question_ids,
             video_start_end=video_start_end,

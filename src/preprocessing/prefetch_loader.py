@@ -71,7 +71,7 @@ class InputGen:
             
             with self.yield_lock:
                 # (N, 3, H, W)
-                self.prced_frms = np.stack(self.processor(video_data)['pixel_values'])
+                self.prced_frms = np.stack(self.processor(images = video_data)['pixel_values'])
                 yield torch.from_numpy(self.prced_frms)
                 self.prced_frms = None
 

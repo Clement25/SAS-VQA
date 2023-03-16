@@ -21,6 +21,7 @@ from queue import Queue, Empty, Full
 from threading import Thread
 from collections import Counter
 
+
 def generate_vidid_json(video_paths, json_outfile):
     mapping_dict = {}
     for i, video_path in enumerate(video_paths):
@@ -28,53 +29,6 @@ def generate_vidid_json(video_paths, json_outfile):
         mapping_dict[video_id] = i
     json.dump(mapping_dict, open(json_outfile, 'w'))
 
-def generate_h5(processor, model, video_paths, args, h5_outfile):  # default-8
-    """
-    Args:
-        model: loaded pretrained model for feature extraction
-        video_ids: list of video ids
-        num_clips: expected numbers of splitted clips
-        outfile: path of output file to be written
-    Returns:
-        h5 file containing visual features of splitted clips.
-    """
-    if not os.path.exists('data/{}'.format(args.dataset)):
-        os.makedirs('data/{}'.format(args.dataset))
-
-    dataset_size = len(video_paths)  # paths
-    # sampling hps and criterions
-    num_frames_default = getattr(args, 'nfrms', 32)
-    
-    with h5py.File(h5_outfile, 'w') as fd:
-        feat_dset = None
-        flens = None
-        i0 = 0
-        _t = {'misc': Timer()}
-        for i, video_path in enumerate(tqdm(video_paths)):
-            _t['misc'].tic()
-            frames, valid = extract_clips_with_consecutive_frames(video_path, processor, model, args)
-            video_length = len(frames)
-            if args.feature_type == 'video':
-                frames_torch = torch.FloatTensor(np.asarray(frames['pixel_values'])).cpu()
-                if valid:
-                    frames_torch = frames_torch.squeeze()
-                else:
-                    frames_torch = np.zeros(shape=(num_frames_default, 768)) # clip output hidden dimension is 768
-                if feat_dset is None:
-                    c, h, w = frames_torch.shape[-3:]
-                    feat_dset = fd['processed_feats'] = np.zeros(shape=(len(video_paths), 128, c, h, w))
-                    flens = fd['frame_lengths'] = np.zeros(shape=(len(video_paths), 1))
-
-            i1 = i0 + 1
-            # if exceeds the maximum lengths, cut the frames
-            flens[i0] = video_length
-            feat_dset[i0][:video_length] = frames_torch
-            i0 = i1
-            _t['misc'].toc()
-            if (i % 1000 == 0):
-                print('{:d}/{:d} {:.3f}s (projected finish: {:.2f} hours)' \
-                      .format(i1, dataset_size, _t['misc'].average_time,
-                              _t['misc'].average_time * (dataset_size - i1) / 3600))
 
 def generate_h5_parallel(processor, model, video_paths, args, h5_outfile):
     if not os.path.exists('data/{}'.format(args.dataset)):
@@ -104,10 +58,12 @@ def generate_h5_parallel(processor, model, video_paths, args, h5_outfile):
     cudathread.start()
     # let queue get filled
     time.sleep(8)
+    
+    IMG_HW = processor.image_processor.crop_size['height']
 
     debug_counter = {'Failure': 0, 'Zeros': 0}
     with h5py.File(h5_outfile, 'w') as fd:    
-        fd.create_dataset("sampled_frames", (len(video_paths), args.K, 3 * 384 * 384))
+        fd.create_dataset("sampled_frames", (len(video_paths), args.K, 3 * IMG_HW * IMG_HW))
         sampled_frames_h5 = fd["sampled_frames"]
         for i in range(len(video_paths)):
             # read video frames out of the queue
@@ -118,7 +74,7 @@ def generate_h5_parallel(processor, model, video_paths, args, h5_outfile):
                 # move model to cuda, set it to eval mode
                 model.eval()
                 model.cuda()
-                model = torch.nn.DataParallel(model, device_ids=[0, 1, 2])
+                model = torch.nn.DataParallel(model, device_ids=[0, 1, 2, 3])
                 # FIXME: remove the counter
                 exted_frms = sample_representative_frames(video_frms, model, args.K, args.W, debug_counter)
                 frms_to_store = exted_frms.reshape(args.K, -1).cpu()
@@ -160,6 +116,7 @@ if __name__ == '__main__':
     parser.add_argument('--W', type=int, default=8, help='interval length to sample 2 points')
 
     # network params
+    
     parser.add_argument('--vlm_model', type=str, default="Salesforce/blip-image-captioning-base")
     parser.add_argument('--h5_fname', type=str, default="processed")
     args = parser.parse_args()
@@ -182,11 +139,9 @@ if __name__ == '__main__':
     if args.dataset == 'tgif-qa':
         args.annotation_file = './data/tgif-qa/csv/Total_{}_question.csv'
         args.video_dir = './data/tgif-qa/gifs'
-        video_paths = tgif_qa.load_video_paths(args)
+        # video_paths = tgif_qa.load_video_paths(args)
         random.shuffle(video_paths)
         # load model
-        generate_h5(processor, video_paths, args.num_clips,
-                    args.outfile.format(args.dataset, args.feature_type, str(args.num_clips)))
 
     if args.dataset == 'msrvtt_qa':
         args.annotation_file = os.path.join(dataset_path, '{}_qa.json')
@@ -224,8 +179,8 @@ if __name__ == '__main__':
         if not os.path.exists(json_outfile):
             generate_vidid_json(video_paths, json_outfile)
         # generate h5 file
-        # generate_h5_parallel(processor, vision_model, video_paths, args,
-                    # h5_outfile)
+        generate_h5_parallel(processor, vision_model, video_paths, args,
+                    h5_outfile)
 
     elif args.dataset == 'svqa':
         args.annotation_file = './data/SVQA/questions.json'

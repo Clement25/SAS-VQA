@@ -214,7 +214,7 @@ class GITBaseModel(nn.Module):
             out = self.model(**inputs)
         else:
             inputs.pop('labels')
-            out = self.model.generate()
+            out = self.model.generate(**inputs)
         return out
 
 def instance_bce_with_logits(logits, labels, reduction="mean"):
