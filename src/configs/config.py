@@ -351,10 +351,10 @@ class SharedConfigs(object):
                     f"use max_n_example_per_group={args.max_n_example_per_group}"
                     f"larger than 1. Automatically reset to 1.")
             args.max_n_example_per_group = 1
-        if os.path.exists(args.ans2label_path):
-            num_answers = len(json.load(open(args.ans2label_path, "r")))
-        else:
-            num_answers = 0
+        # if os.path.exists(getattr(args, 'ans2label_path', None)):
+        #     num_answers = len(json.load(open(args.ans2label_path, "r")))
+        # else:
+        num_answers = 1000
 
         if args.task in ["action", "transition"]:
             args.num_labels = 5
@@ -363,7 +363,7 @@ class SharedConfigs(object):
             args.num_labels = max(num_answers, 1540)
             args.loss_type = "ce"
         elif args.task == "msrvtt_qa":
-            args.num_labels = max(num_answers, 1500)
+            args.num_labels = max(num_answers, 1000)
             args.loss_type = "ce"
         elif args.task == "msvd_qa":
             args.num_labels = max(num_answers, 1000)

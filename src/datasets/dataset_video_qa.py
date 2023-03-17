@@ -350,7 +350,7 @@ class GITVideoQACollator(BaseQACollator):
         # FIXME: only impl single here
         B, L, _ = visual_inputs.size()
         # assert L == self.nframe
-        visual_inputs = visual_inputs.reshape(B*L, 3, self.img_size, self.img_size)
+        visual_inputs = visual_inputs.reshape(B, L, 3, self.img_size, self.img_size)
         video_lengths = [L] * B
         
         video_start_end = [0]
@@ -363,7 +363,6 @@ class GITVideoQACollator(BaseQACollator):
         else:
             src_text = ['[CLS] ' + d['q_str'] for d in text_examples]
             
-        
         question_ids = [d["question_id"] for d in text_examples]
         
         if self.add_ans:
