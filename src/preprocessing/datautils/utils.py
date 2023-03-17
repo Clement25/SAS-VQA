@@ -85,7 +85,8 @@ def sample_representative_frames(frames, model, K=16, W=8, debug_counter=None):
 
 def sample_frames_uniform(frames, K=8):
     num_frames = len(frames)
-    assert num_frames > K
+    if num_frames <= K:
+        print(num_frames)
     intv = num_frames / K
     
     cur_idx = int(intv // 2)

@@ -173,7 +173,8 @@ def mk_tgif_qa_dataloader(task_type, anno_path, ans2label, img_hdf5_dir, cfg, to
                                     task_type=cfg.task,
                                     nframe=cfg.nframe,
                                     samp_policy=cfg.samp_policy,
-                                    img_size=cfg.img_size)
+                                    img_size=cfg.img_size,
+                                    add_ans=is_train)
     dataloader = DataLoader(dataset,
                             batch_size=batch_size,
                             shuffle=is_train,
@@ -201,7 +202,7 @@ def setup_dataloaders(cfg, tokenizer):
     if cfg.task in ['msvd_qa', 'msrvtt_qa']:
         # anno_files = (cfg.train_datasets[0].txt, cfg.val_datasets[0].txt)
         anno_files = (cfg.train_datasets[0].txt,)
-        ans2label = build_common_answer_dict(anno_files, 1000)
+        ans2label = build_common_answer_dict(anno_files, 4000)
         train_loader = mk_tgif_qa_dataloader(
             task_type=cfg.task,
             anno_path=cfg.train_datasets[0].txt,
@@ -214,7 +215,9 @@ def setup_dataloaders(cfg, tokenizer):
             anno_path=cfg.val_datasets[0].txt,
             ans2label=ans2label,
             img_hdf5_dir=cfg.train_datasets[0].img,
-            cfg=cfg, tokenizer=tokenizer, is_train=False, return_label=True
+            cfg=cfg, tokenizer=tokenizer, 
+            is_train=False, 
+            return_label=True
         )
         test_loader = mk_tgif_qa_dataloader(
             task_type=cfg.task,
@@ -287,6 +290,7 @@ def validate(model, val_loader, cfg, eval_score=True, processor=None, ans2label=
     pbar = tqdm(total=len(val_loader))
     
     for val_step, batch in enumerate(val_loader):
+        
         # forward pass
         question_ids = batch["question_ids"]
         # used to make visual feature copies
@@ -314,22 +318,23 @@ def validate(model, val_loader, cfg, eval_score=True, processor=None, ans2label=
         elif flag_prtr == 2:
             # mapback to task-specific vocabulary ids
             pred_labels_str = processor.batch_decode(outputs["generated_ids"], skip_special_tokens=True)
-            pred_labels = [ans2label.get(w, -1) for w in pred_labels_str]
+            pred_labels = [ans2label.get(pred.split()[-1], -1) for pred in pred_labels_str]
             
-        for qid, pred_label in zip(question_ids, pred_labels):
+        for i, (qid, pred_label) in enumerate(zip(question_ids, pred_labels)):
             qa_results.append(dict(
                 question_id=qid,
                 answer=pred_label,
-                # answer_str=pred_label_str,
+                answer_str=pred_labels_str[i],
                 data=val_loader.dataset.qid2data[qid]
             ))
         pbar.update(1)
         if cfg.debug and val_step >= debug_step:
             break
-        
+    
     if cfg.debug:
         LOGGER.info(qa_results[:10])
     val_log = {f'valid/loss': float(loss / n_ex)}
+    
     if eval_score:
         LOGGER.info(f"QA Task [{cfg.task}], "
                     f"{len(qa_results)} qa_results,"
@@ -420,7 +425,7 @@ def start_training(cfg):
     optimizer = getattr(torch.optim, cfg.optim)(
         params = all_params, lr = cfg.learning_rate
     )
-    if cfg.decay == 'constant':
+    if getattr(cfg, 'decay', 'constant') == 'constant':
         scheduler = None 
     elif cfg.decay == 'multi_step':
         scheduler = MultiStepLR(optimizer, milestones=cfg.step_decay_epochs, gamma=cfg.gamma)

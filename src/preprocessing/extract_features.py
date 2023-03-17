@@ -80,6 +80,7 @@ def generate_h5_parallel(processor, model, video_paths, args, h5_outfile):
                 frms_to_store = exted_frms.reshape(args.K, -1).cpu()
                 sampled_frames_h5[i] = frms_to_store
             elif args.sampling_strategy == 'uni':
+                video_frms = video_frms.squeeze()
                 exted_frms = sample_frames_uniform(video_frms, K=args.K)
                 frms_to_store = exted_frms.reshape(args.K, -1).cpu()
                 sampled_frames_h5[i] = frms_to_store
