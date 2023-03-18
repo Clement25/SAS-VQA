@@ -29,6 +29,13 @@ def generate_vidid_json(video_paths, json_outfile):
         mapping_dict[video_id] = i
     json.dump(mapping_dict, open(json_outfile, 'w'))
 
+def sample_frame_indices(video_frms, clip_len, frame_sample_rate, seg_len):
+    converted_len = int(clip_len * frame_sample_rate)
+    end_idx = np.random.randint(converted_len, seg_len)
+    start_idx = end_idx - converted_len
+    indices = np.linspace(start_idx, end_idx, num=clip_len)
+    indices = np.clip(indices, start_idx, end_idx - 1).astype(np.int64)
+    return video_frms[indices]
 
 def generate_h5_parallel(processor, model, video_paths, args, h5_outfile):
     if not os.path.exists('data/{}'.format(args.dataset)):
@@ -58,9 +65,7 @@ def generate_h5_parallel(processor, model, video_paths, args, h5_outfile):
     cudathread.start()
     # let queue get filled
     time.sleep(8)
-    
     IMG_HW = processor.image_processor.crop_size['height']
-
     debug_counter = {'Failure': 0, 'Zeros': 0}
     with h5py.File(h5_outfile, 'w') as fd:    
         fd.create_dataset("sampled_frames", (len(video_paths), args.K, 3 * IMG_HW * IMG_HW))
@@ -69,6 +74,8 @@ def generate_h5_parallel(processor, model, video_paths, args, h5_outfile):
             # read video frames out of the queue
             _, video_frms = cuda_video_queue.get(block=True)
             
+            if len(video_frms.size()) > 4:  # should be (N, 3, H, W)
+                video_frms = video_frms.squeeze(0)
             # extract special representative frames
             if args.sampling_strategy == 'repr':
                 # move model to cuda, set it to eval mode
@@ -77,13 +84,12 @@ def generate_h5_parallel(processor, model, video_paths, args, h5_outfile):
                 model = torch.nn.DataParallel(model, device_ids=[0, 1, 2, 3])
                 # FIXME: remove the counter
                 exted_frms = sample_representative_frames(video_frms, model, args.K, args.W, debug_counter)
-                frms_to_store = exted_frms.reshape(args.K, -1).cpu()
-                sampled_frames_h5[i] = frms_to_store
             elif args.sampling_strategy == 'uni':
-                video_frms = video_frms.squeeze()
                 exted_frms = sample_frames_uniform(video_frms, K=args.K)
-                frms_to_store = exted_frms.reshape(args.K, -1).cpu()
-                sampled_frames_h5[i] = frms_to_store
+            elif args.sampling_strategy == 'git6':  # same as GIT-VideoQA implementation
+                exted_frms = sample_frame_indices(video_frms, args.K, 4, 300)
+            frms_to_store = exted_frms.reshape(args.K, -1).cpu()
+            sampled_frames_h5[i] = frms_to_store
     
     load_thread_killer.set_tokill(True)
     cuda_transfers_thread_killer.set_tokill(True)
@@ -112,7 +118,7 @@ if __name__ == '__main__':
     # feature extraction hps
     parser.add_argument('--chunk_size', type=int, default=512, help='chunk size for computing feature similarity')
     parser.add_argument('--intv', type=int, default=1, help='sampling interval between video frames')
-    parser.add_argument('--sampling_strategy', default='uni', choices=['uni', 'repr'], type=str)
+    parser.add_argument('--sampling_strategy', default='uni', choices=['uni', 'repr', 'git6'], type=str)
     parser.add_argument('--K', type=int, default=16, help='number of frames to be sampled (esp. uniform sampling)')
     parser.add_argument('--W', type=int, default=8, help='interval length to sample 2 points')
 

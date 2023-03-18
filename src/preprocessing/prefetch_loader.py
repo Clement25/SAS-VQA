@@ -24,7 +24,7 @@ def get_path_i(paths_count):
         yield current_path_id
 
 class InputGen:
-    def __init__(self, paths, processor, intv):
+    def __init__(self, paths, processor, intv, toolkit='cv2'):
         self.paths = paths
         self.index = 0
         self.init_count = 0
@@ -49,7 +49,7 @@ class InputGen:
 
     def __iter__(self):
         #Iterates through the input paths in a thread-safe manner
-        for path_id in tqdm(self.path_id_generator, total=len(self.paths)): 
+        for path_id in tqdm(self.path_id_generator, total=len(self.paths)):
             video_file = self.paths[path_id]
             video_data = []
             try:
