@@ -42,6 +42,7 @@
   "val_batch_size": 16,
   "num_train_epochs": 20,
   "min_valid_steps": 50,
+  "zero_eval": true,
   "num_valid": 60,
   "learning_rate": 1e-5,
   "weight_decay": 1e-3,

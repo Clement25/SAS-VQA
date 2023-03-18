@@ -202,7 +202,7 @@ def setup_dataloaders(cfg, tokenizer):
     if cfg.task in ['msvd_qa', 'msrvtt_qa']:
         # anno_files = (cfg.train_datasets[0].txt, cfg.val_datasets[0].txt)
         anno_files = (cfg.train_datasets[0].txt,)
-        ans2label = build_common_answer_dict(anno_files, 4000)  # all included
+        ans2label = build_common_answer_dict(anno_files, 1000)  # all included
         train_loader = mk_tgif_qa_dataloader(
             task_type=cfg.task,
             anno_path=cfg.train_datasets[0].txt,
@@ -282,7 +282,6 @@ def validate(model, val_loader, cfg, eval_score=True, processor=None, ans2label=
     """use eval_score=False when doing inference on test sets where answers are not available"""
     model.eval()
 
-    import ipdb; ipdb.set_trace()
     loss = 0.
     n_ex = 0
     qa_results = []
@@ -291,9 +290,6 @@ def validate(model, val_loader, cfg, eval_score=True, processor=None, ans2label=
     pbar = tqdm(total=len(val_loader))
     
     for val_step, batch in enumerate(val_loader):
-        if val_step == 5:
-            break
-        
         # forward pass
         question_ids = batch["question_ids"]
         # used to make visual feature copies
