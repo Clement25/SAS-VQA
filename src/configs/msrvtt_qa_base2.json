@@ -3,14 +3,14 @@
     {
       "name": "msrvtt_qa",
       "txt": "/data/henry/msrvtt_qa/train_qa.json",
-      "img": "/data/henry/msrvtt_qa/processed/msrvtt_qa_video_feat.h5"
+      "img": "/data/henry/msrvtt_qa/processed_random/msrvtt_qa_video_feat.h5"
     }
   ],
   "val_datasets": [
     {
       "name": "msrvtt_qa",
       "txt": "/data/henry/msrvtt_qa/val_qa.json",
-      "img": "/data/henry/msrvtt_qa/processed/msrvtt_qa_video_feat.h5"
+      "img": "/data/henry/msrvtt_qa/processed_random/msrvtt_qa_video_feat.h5"
     }
   ],
   "model": 
@@ -24,8 +24,8 @@
   }
   ,
   "inference_txt_db": "/data/henry/msrvtt_qa/test_qa.json",
-  "inference_img_db": "/data/henry/msrvtt_qa/processed/msrvtt_qa_video_feat.h5",
-  "vid_mapping": "/data/henry/msrvtt_qa/processed/vidmapping.json",
+  "inference_img_db": "/data/henry/msrvtt_qa/processed_random/msrvtt_qa_video_feat.h5",
+  "vid_mapping": "/data/henry/msrvtt_qa/processed_random/vidmapping.json",
   "img_size": 224,
   "img_pixel_mean": [123.675, 116.28, 103.53],
   "img_pixel_std": [1.0, 1.0, 1.0],

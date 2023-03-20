@@ -26,7 +26,7 @@ def decode(seq_idx, idx_to_token, delim=None, stop_at_end=True):
     else:
         return delim.join(tokens)
 
-CHUNK_SIZE = 512
+CHUNK_SIZE = 256
 def sample_representative_frames(frames, model, K=16, W=8, debug_counter=None):
     feat_chunks = []
     num_frames = frames.size(0)
@@ -34,7 +34,7 @@ def sample_representative_frames(frames, model, K=16, W=8, debug_counter=None):
     
     for i in range(num_chunks):
         chunk_feats = model(frames[i*CHUNK_SIZE:(i+1)*CHUNK_SIZE]).pooler_output
-        chunk_feats = chunk_feats.detach()
+        chunk_feats = chunk_feats.detach().cpu()
         chunk_feats = normalize(chunk_feats)
         feat_chunks.append(chunk_feats)
     

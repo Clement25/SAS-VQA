@@ -83,7 +83,7 @@ class MyGitModel(GitModel):
                 visual_features = []
                 for frame_idx in range(pixel_values.shape[1]):
                     visual_features_frame = self.image_encoder(pixel_values[:, frame_idx, :, :]).last_hidden_state
-                    # visual_features_frame += self.img_temperal_embedding[frame_idx]
+                    visual_features_frame += self.img_temperal_embedding[frame_idx]
                     visual_features.append(visual_features_frame)
 
                 # finally, concatenate all features along sequence dimension

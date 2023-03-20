@@ -13,7 +13,7 @@ from datautils.utils import sample_representative_frames, sample_frames_uniform,
 from datautils import msrvtt_qa
 from datautils import msvd_qa
 # from datautils import svqa
-from transformers import CLIPImageProcessor, CLIPVisionModel
+from transformers import CLIPImageProcessor, CLIPVisionModel, GitVisionModel
 # from transformers import BLIPImageProcessor, BLIPVisionModel
 from transformers import AutoProcessor
 from prefetch_loader import *
@@ -83,7 +83,7 @@ def generate_h5_parallel(processor, model, video_paths, args, h5_outfile):
                 # move model to cuda, set it to eval mode
                 model.eval()
                 model.cuda()
-                model = torch.nn.DataParallel(model, device_ids=[0, 1, 2, 3])
+                model = torch.nn.DataParallel(model, device_ids=[0, 1])
                 # FIXME: remove the counter
                 exted_frms = sample_representative_frames(video_frms, model, args.K, args.W, debug_counter)
             elif args.sampling_strategy == 'uni':
