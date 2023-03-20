@@ -32,9 +32,10 @@ def sample_representative_frames(frames, model, K=16, W=8, debug_counter=None):
     num_frames = frames.size(0)
     num_chunks = num_frames // CHUNK_SIZE + (1 if (num_frames % CHUNK_SIZE) > 0 else 0)
     
+    print(num_chunks)
     for i in range(num_chunks):
         chunk_feats = model(frames[i*CHUNK_SIZE:(i+1)*CHUNK_SIZE]).pooler_output
-        chunk_feats = chunk_feats.detach().cpu()
+        chunk_feats = chunk_feats.detach()
         chunk_feats = normalize(chunk_feats)
         feat_chunks.append(chunk_feats)
     

@@ -42,10 +42,15 @@ def generate_h5_parallel(processor, model, video_paths, args, h5_outfile):
     if not os.path.exists('data/{}'.format(args.dataset)):
         os.makedirs('data/{}'.format(args.dataset))
     
+    if model is not None:
+        model.eval()
+        model.cuda()
+        model = torch.nn.DataParallel(model, device_ids=[0, 1, 2, 3])
+
     # cpu video queue
     memory_video_queue = Queue(maxsize=8)
     # cuda processing queue
-    cuda_video_queue = Queue(maxsize=2)
+    cuda_video_queue = Queue(maxsize=4)
     
     # video frame generator
     frm_generator = InputGen(video_paths, processor, args.intv)
@@ -81,11 +86,9 @@ def generate_h5_parallel(processor, model, video_paths, args, h5_outfile):
             # extract special representative frames
             if args.sampling_strategy == 'repr':
                 # move model to cuda, set it to eval mode
-                model.eval()
-                model.cuda()
-                model = torch.nn.DataParallel(model, device_ids=[0, 1])
                 # FIXME: remove the counter
                 exted_frms = sample_representative_frames(video_frms, model, args.K, args.W, debug_counter)
+            
             elif args.sampling_strategy == 'uni':
                 exted_frms = sample_frames_uniform(video_frms, K=args.K)
             elif args.sampling_strategy == 'git6':  # same as GIT-VideoQA implementation
@@ -149,11 +152,11 @@ if __name__ == '__main__':
     if args.dataset == 'tgif-qa':
         args.annotation_file = './data/tgif-qa/csv/Total_{}_question.csv'
         args.video_dir = './data/tgif-qa/gifs'
-        # video_paths = tgif_qa.load_video_paths(args)
+        video_paths = tgif_qa.load_video_paths(args)
         random.shuffle(video_paths)
         # load model
 
-    if args.dataset == 'msrvtt_qa':
+    elif args.dataset == 'msrvtt_qa':
         args.annotation_file = os.path.join(dataset_path, '{}_qa.json')
         args.video_dir = os.path.join(dataset_path, 'video')
         video_paths = msrvtt_qa.load_video_paths(args)
@@ -173,7 +176,7 @@ if __name__ == '__main__':
         generate_h5_parallel(processor, vision_model, video_paths, args,
                     h5_outfile)
 
-    if args.dataset == 'msvd_qa':
+    elif args.dataset == 'msvd_qa':
         args.annotation_file = os.path.join(dataset_path, 'annotations/qa_{}.json')
         args.video_dir = os.path.join(dataset_path, 'video')
         video_paths = msvd_qa.load_video_paths(args)
