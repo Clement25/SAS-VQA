@@ -33,7 +33,11 @@ def sample_representative_frames(frames, model, K=16, W=8, debug_counter=None):
     num_chunks = num_frames // CHUNK_SIZE + (1 if (num_frames % CHUNK_SIZE) > 0 else 0)
     
     for i in range(num_chunks):
-        chunk_feats = model(frames[i*CHUNK_SIZE:(i+1)*CHUNK_SIZE]).pooler_output
+        model_out = model(frames[i*CHUNK_SIZE:(i+1)*CHUNK_SIZE])
+        if hasattr(model_out, 'pooler_output'):
+            chunk_feats = model_out.pooler_output
+        else:
+            chunk_feats = model_out.last_hidden_state.mean(dim=1)    # pooling
         chunk_feats = chunk_feats.detach()
         chunk_feats = normalize(chunk_feats)
         feat_chunks.append(chunk_feats)

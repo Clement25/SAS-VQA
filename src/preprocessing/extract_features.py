@@ -140,10 +140,9 @@ if __name__ == '__main__':
     np.random.seed(args.seed)
 
     # initialize clip processors
-    # processor = CLIPImageProcessor.from_pretrained(args.vlm_model)
     processor = AutoProcessor.from_pretrained(args.vlm_model)
     if args.sampling_strategy == 'repr':
-        vision_model = CLIPVisionModel.from_pretrained(args.vlm_model)
+        vision_model = GitVisionModel.from_pretrained(args.vlm_model)
     else:
         vision_model = None
     dataset_path = os.path.join(args.dataset_root, args.dataset)
