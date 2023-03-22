@@ -141,7 +141,10 @@ if __name__ == '__main__':
     # initialize clip processors
     processor = AutoProcessor.from_pretrained(args.vlm_model)
     if args.sampling_strategy == 'repr':
-        vision_model = GitVisionModel.from_pretrained(args.vlm_model)
+        if 'git' in args.vlm_model.lower():
+            vision_model = GitVisionModel.from_pretrained(args.vlm_model)
+        elif 'clip' in args.vlm_model.lower():
+            vision_model = CLIPVisionModel.from_pretrained(args.vlm_model)
     else:
         vision_model = None
     dataset_path = os.path.join(args.dataset_root, args.dataset)

@@ -323,7 +323,7 @@ def validate(model, val_loader, cfg, eval_score=True, processor=None, ans2label=
             qa_results.append(dict(
                 question_id=qid,
                 answer=pred_label,
-                answer_str=pred_labels_str[i],
+                answer_str=pred_labels_str[i] if flag_prtr == 2 else None,
                 data=val_loader.dataset.qid2data[qid]
             ))
         pbar.update(1)
@@ -380,7 +380,6 @@ def validate(model, val_loader, cfg, eval_score=True, processor=None, ans2label=
     model.train()
     return qa_results, gathered_scores
 
-
 def start_training(cfg):
     set_random_seed(cfg.seed)
     # n_gpu = hvd.size()
@@ -392,7 +391,6 @@ def start_training(cfg):
     LOGGER.info("device: {} n_gpu: {}, rank: {}, "
                 "16-bits training: {}".format(
                     device, n_gpu, 0, bool(cfg.fp16)))
-
 
     if 'blip' in cfg.model.pretrained_model.lower():
         flag_prtr = 0
