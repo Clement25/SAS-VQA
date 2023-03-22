@@ -45,7 +45,7 @@ def generate_h5_parallel(processor, model, video_paths, args, h5_outfile):
     if model is not None:
         model.eval()
         model.cuda()
-        model = torch.nn.DataParallel(model, device_ids=[0, 1, 2, 3])
+        model = torch.nn.DataParallel(model, device_ids=[0, 1])
 
     # cpu video queue
     memory_video_queue = Queue(maxsize=8)
