@@ -88,7 +88,6 @@ def generate_h5_parallel(processor, model, video_paths, args, h5_outfile):
                 # move model to cuda, set it to eval mode
                 # FIXME: remove the counter
                 exted_frms = sample_representative_frames(video_frms, model, args.K, args.W, debug_counter)
-            
             elif args.sampling_strategy == 'uni':
                 exted_frms = sample_frames_uniform(video_frms, K=args.K)
             elif args.sampling_strategy == 'git6':  # same as GIT-VideoQA implementation

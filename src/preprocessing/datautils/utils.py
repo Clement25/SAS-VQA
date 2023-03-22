@@ -38,6 +38,7 @@ def sample_representative_frames(frames, model, K=16, W=8, debug_counter=None):
             chunk_feats = model_out.pooler_output
         else:
             chunk_feats = model_out.last_hidden_state.mean(dim=1)    # pooling
+
         chunk_feats = chunk_feats.detach()
         chunk_feats = normalize(chunk_feats)
         feat_chunks.append(chunk_feats)
@@ -51,7 +52,7 @@ def sample_representative_frames(frames, model, K=16, W=8, debug_counter=None):
     
     # filter frames
     lcl_avg = torch.zeros(all_sims.shape[0])
-    for i in range(all_sims.shape[0]):
+    for i in range(W, all_sims.shape[0]-W):
         subsim = all_sims[i][i-W:i+W]
         lcl_avg[i] = (subsim.sum()-1) / (len(subsim) - 1)
     
@@ -82,6 +83,7 @@ def sample_representative_frames(frames, model, K=16, W=8, debug_counter=None):
             v, idx = lcl_avg[right:r].topk(1)
             heappush(intvs, (-v, (right, r), right+idx))
     
+    res.sort()
     if len(res) < K:
         res = lcl_avg.topk(K)[1]
         debug_counter['Failure'] += 1
