@@ -60,11 +60,11 @@ def sample_representative_frames(frames, model, K=16, W=8, debug_counter=None):
     top_idx = lcl_avg.argmax()  # the one has top lcl_avg shoule be preserved
     res = [top_idx.item()]
     intvs = []
-    if top_idx - W > 0:
+    shift = 2 * W
+    if top_idx - shift > 0:
         v, idx = lcl_avg[0:top_idx-W].topk(1)
-        # intvs.append(((0, top-W), v, idx))
         heappush(intvs, (-v, (0, top_idx-W), idx))
-    if top_idx + W < len(lcl_avg):
+    if top_idx + shift < len(lcl_avg):
         v, idx = lcl_avg[top_idx+W:].topk(1)
         heappush(intvs, (-v, (top_idx+W, len(lcl_avg)), top_idx+W+idx))
         
@@ -74,8 +74,8 @@ def sample_representative_frames(frames, model, K=16, W=8, debug_counter=None):
         top_idx = top[2][0].item()
         res.append(top_idx)
         l, r = top[1]
-        left = top_idx - W
-        right = top_idx + W
+        left = top_idx - shift
+        right = top_idx + shift
         if left > l:
             v, idx = lcl_avg[l:left].topk(1)
             heappush(intvs, (-v, (l, left), l+idx))
