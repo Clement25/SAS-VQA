@@ -28,6 +28,9 @@ def decode(seq_idx, idx_to_token, delim=None, stop_at_end=True):
 
 CHUNK_SIZE = 256
 def sample_representative_frames(frames, model, K=16, W=8, debug_counter=None):
+    if W == -1: # adaptive width
+        W = len(frames) // (3 * K)
+
     feat_chunks = []
     num_frames = frames.size(0)
     num_chunks = num_frames // CHUNK_SIZE + (1 if (num_frames % CHUNK_SIZE) > 0 else 0)
@@ -60,7 +63,9 @@ def sample_representative_frames(frames, model, K=16, W=8, debug_counter=None):
     top_idx = lcl_avg.argmax()  # the one has top lcl_avg shoule be preserved
     res = [top_idx.item()]
     intvs = []
+    
     shift = 2 * W
+    
     if top_idx - shift > 0:
         v, idx = lcl_avg[0:top_idx-W].topk(1)
         heappush(intvs, (-v, (0, top_idx-W), idx))

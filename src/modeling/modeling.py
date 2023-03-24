@@ -83,7 +83,7 @@ class MyGitModel(GitModel):
                 visual_features = []
                 for frame_idx in range(pixel_values.shape[1]):
                     visual_features_frame = self.image_encoder(pixel_values[:, frame_idx, :, :]).last_hidden_state
-                    visual_features_frame += self.img_temperal_embedding[frame_idx]
+                    # visual_features_frame += self.img_temperal_embedding[frame_idx]
                     visual_features.append(visual_features_frame)
 
                 # finally, concatenate all features along sequence dimension
@@ -319,8 +319,9 @@ class GITBaseModel(nn.Module):
     def __init__(self, config):
         super().__init__()
         self.config = config
-        self.model = MyGitForCausalLM.from_pretrained(config.pretrained_model)
-
+        # self.model = MyGitForCausalLM.from_pretrained(config.pretrained_model)
+        self.model = MyGitForCausalLM.from_pretrained(config.pretrained_model, num_image_with_embedding=config.img_len)
+        
     def forward(self, inputs):
         r"""Modified from BertModel
         text_input_ids: (B, Lt)

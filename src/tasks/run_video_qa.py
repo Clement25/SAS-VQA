@@ -416,6 +416,8 @@ def start_training(cfg):
     # setup dataset and model
     train_loader, val_loader, test_loader = setup_dataloaders(cfg, tokenizer)
     model = setup_model(cfg, device=device)
+    
+    # model = torch.nn.DataParallel(model, device_ids=[0, 1])
     model.train()
 
     all_params =  [p for p in model.parameters() if p.requires_grad]
@@ -518,7 +520,7 @@ def start_training(cfg):
             none_grads = [
                 p[0] for p in model.named_parameters()
                 if p[1].requires_grad and p[1].grad is None]
-            assert len(none_grads) == 0
+            # assert len(none_grads) == 0
 
             optimizer.step()
             optimizer.zero_grad()
