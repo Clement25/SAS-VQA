@@ -83,7 +83,7 @@ class MyGitModel(GitModel):
                 visual_features = []
                 for frame_idx in range(pixel_values.shape[1]):
                     visual_features_frame = self.image_encoder(pixel_values[:, frame_idx, :, :]).last_hidden_state
-                    visual_features_frame += self.img_temperal_embedding[frame_idx]
+                    # visual_features_frame += self.img_temperal_embedding[frame_idx]
                     visual_features.append(visual_features_frame)
 
                 # finally, concatenate all features along sequence dimension
@@ -165,7 +165,6 @@ class MyGitModel(GitModel):
 class MyGitForCausalLM(GitPreTrainedModel):
     def __init__(self, config):
         super().__init__(config)
-
         self.git = MyGitModel(config)
         self.output = nn.Linear(config.hidden_size, config.vocab_size)
 
@@ -318,8 +317,8 @@ class BLIPBaseModel(nn.Module):
 class GITBaseModel(nn.Module):
     def __init__(self, config):
         super().__init__()
-        self.config = config
-        self.model = MyGitForCausalLM.from_pretrained(config.pretrained_model)
+        
+        self.model = MyGitForCausalLM.from_pretrained(config.pretrained_model, num_image_with_embedding=config.img_len)
 
     def forward(self, inputs):
         r"""Modified from BertModel
@@ -379,7 +378,7 @@ class CrossAttentionLayer(nn.Module):
             return self.attention(vis_in, txt_in, tgt_key_padding_mask=~txt_attn_mask.bool())
         elif self.attn_type == 'dec-only':
             # trg is the first param
-            return self.attention(txt_in, vis_in, tgt_key_padding_mask=~txt_attn_mask)
+            return self.attention(txt_in, vis_in, tgt_key_padding_mask=~txt_attn_mask.bool())
         elif self.attn_type == 'dec-cas':
             T = vis_in.size(1)  # (B, L, E_v)
             o = txt_in

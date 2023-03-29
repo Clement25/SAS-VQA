@@ -28,6 +28,9 @@ def decode(seq_idx, idx_to_token, delim=None, stop_at_end=True):
 
 CHUNK_SIZE = 256
 def sample_representative_frames(frames, model, K=16, W=8, debug_counter=None):
+    if W == -1: # adaptive width
+        W = len(frames) // (4 * K)
+    
     feat_chunks = []
     num_frames = frames.size(0)
     num_chunks = num_frames // CHUNK_SIZE + (1 if (num_frames % CHUNK_SIZE) > 0 else 0)

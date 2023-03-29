@@ -520,7 +520,7 @@ def start_training(cfg):
             none_grads = [
                 p[0] for p in model.named_parameters()
                 if p[1].requires_grad and p[1].grad is None]
-            assert len(none_grads) == 0
+            # assert len(none_grads) == 0
 
             optimizer.step()
             optimizer.zero_grad()

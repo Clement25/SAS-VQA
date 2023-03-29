@@ -35,6 +35,7 @@
   "nframe": 1,
   "samp_policy": "uniform",
   "max_n_example_per_group": 1,
+  "img_len": 8,
   "train_batch_size": 8,
   "gradient_accumulation_steps": 64,
   "val_batch_size": 16,
