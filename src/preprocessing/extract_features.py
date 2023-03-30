@@ -15,7 +15,7 @@ from datautils import msvd_qa
 # from datautils import svqa
 from transformers import CLIPImageProcessor, CLIPVisionModel, GitVisionModel
 # from transformers import BLIPImageProcessor, BLIPVisionModel
-from transformers import AutoProcessor
+from transformers import AutoProcessor, AutoModel
 from prefetch_loader import *
 from queue import Queue, Empty, Full
 from threading import Thread
@@ -92,6 +92,9 @@ def generate_h5_parallel(processor, model, video_paths, args, h5_outfile):
                 exted_frms = sample_frames_uniform(video_frms, K=args.K)
             elif args.sampling_strategy == 'git6':  # same as GIT-VideoQA implementation
                 exted_frms = sample_frame_indices(video_frms, args.K, 4, len(video_frms))
+            elif args.sampling_strategy == 'gitc':
+                exted_uni_frms = sample_frames_uniform(video_frms, K=args.K)
+                
 
             frms_to_store = exted_frms.cpu().reshape(args.K, -1)
             sampled_frames_h5[i] = frms_to_store
@@ -124,7 +127,7 @@ if __name__ == '__main__':
     parser.add_argument('--chunk_size', type=int, default=512, help='chunk size for computing feature similarity')
     parser.add_argument('--img_size', type=int, default=224, help='image size of extracted frames')
     parser.add_argument('--intv', type=int, default=1, help='sampling interval between video frames')
-    parser.add_argument('--sampling_strategy', default='uni', choices=['uni', 'repr', 'git6'], type=str)
+    parser.add_argument('--sampling_strategy', default='uni', choices=['uni', 'repr', 'git6', 'gitc'], type=str)
     parser.add_argument('--K', type=int, default=16, help='number of frames to be sampled (esp. uniform sampling)')
     parser.add_argument('--W', type=int, default=8, help='interval length to sample 2 points')
 
@@ -204,4 +207,5 @@ if __name__ == '__main__':
         # load model
         generate_h5(processor, video_paths, args.num_clips,
                 args.outfile.format(args.dataset, args.feature_type, str(args.num_clips)))
+    
 

@@ -29,7 +29,7 @@ def decode(seq_idx, idx_to_token, delim=None, stop_at_end=True):
 CHUNK_SIZE = 256
 def sample_representative_frames(frames, model, K=16, W=8, debug_counter=None):
     if W == -1: # adaptive width
-        W = len(frames) // (3 * K)
+        W = len(frames) // (2.5 * K)
 
     feat_chunks = []
     num_frames = frames.size(0)
@@ -108,6 +108,8 @@ def sample_frames_uniform(frames, K=8):
     
     assert len(sampled_frames) == K
     return torch.stack(sampled_frames)
+
+# def sample_frame_with_caption(video_frms, K, )
 
 # --------------------------------------------------------
 # Fast R-CNN

@@ -295,6 +295,7 @@ class CLIPBaseModel(nn.Module):
         """
         txt_out = self.txt_model(**txt_inputs)
         vis_out = self.vis_model(**vis_inputs)
+        import ipdb; ipdb.set_trace()
         return dict(txt_out=txt_out, vis_out=vis_out, txt_attn_mask=txt_inputs["attention_mask"])
 
 class BLIPBaseModel(nn.Module):
