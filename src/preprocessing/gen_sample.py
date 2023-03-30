@@ -6,12 +6,14 @@ from torch import nn
 import random
 import numpy as np
 from datautils.utils import Timer
+import sys
+sys.path.append('./')
 from src.utils.basic_utils import load_jsonl, load_json, save_json, get_rounded_percentage
 # from datautils import tgif_qa
 from datautils import msrvtt_qa
 from datautils import msvd_qa
 # from datautils import svqa
-from transformers import AutoProcessor, AutoModelForCausalLM
+from transformers import AutoProcessor, AutoModelForCausalLM, AutoTokenizer, AutoModelForSequenceClassification
 from src.utils.logger import LOGGER, TB_LOGGER, add_log_to_file, RunningMeter
 
 
@@ -25,7 +27,7 @@ def get_cap(processor, cap_model, frms):
 def generate_cap(processor, caption_model, anno_path, h5_outfile, vid_map_file, args):
     vid2id = load_json(vid_map_file)
     caption_model.eval().cuda()
-    caption_model = torch.nn.DataParallel(caption_model, device_ids=[0, 1, 2, 3])
+    # caption_model = torch.nn.DataParallel(caption_model, device_ids=[0, 1, 2, 3])
     if isinstance(caption_model, torch.nn.DataParallel):
         caption_model = caption_model.module
     
@@ -35,7 +37,7 @@ def generate_cap(processor, caption_model, anno_path, h5_outfile, vid_map_file, 
             anno_file = os.path.join(anno_path, 'qa_{}.json'.format(split))
             ds = load_json(anno_file)
             new_ds = []
-            for sample in tqdm(ds[:2]):
+            for sample in tqdm(ds):
                 new_sample = sample.copy()
                 vid = sample['video'].split('.')[0]
                 idx = vid2id[vid]
@@ -50,6 +52,34 @@ def generate_cap(processor, caption_model, anno_path, h5_outfile, vid_map_file, 
             new_anno_file = os.path.join(anno_path, 'qa_new_{}.json'.format(split))
             save_json(new_ds, new_anno_file)
 
+def move_to_cuda(input):
+    return {k:v.cuda() for k, v in input.items()}
+
+def generate_inds(tokenizer, model, anno_path, args):
+    model.eval().cuda()
+    for split in ['train', 'val', 'test']:
+        read_file = os.path.join(anno_path, 'qa_new_{}.json'.format(split))
+        ds = load_json(read_file)
+        new_ds = []
+        for sample in tqdm(ds):
+            question = sample['question']
+            captions = sample.pop('caps')
+            # calculate the score between question and captions
+            # input_str = ["[CLS] " + question + " [SEP] " + caption + " [SEP]" for caption in captions]
+            bsz = len(captions)
+            inputs = tokenizer(text=[question]*bsz, text_pair=captions, padding=True, truncation=True, return_tensors='pt')
+            inputs = move_to_cuda(inputs)
+            output = model(**inputs)
+            scores = output[0][:,0] # logits
+            
+            # get highest scores
+            inds = scores.topk(args.K)[1].detach().cpu().tolist()
+            inds.sort()
+            sample['sampled_inds'] = inds
+            
+            new_ds.append(sample)
+        save_file = os.path.join(anno_path, 'qa_winds_{}.json'.format(split))
+        save_json(new_ds, save_file)
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
@@ -67,6 +97,7 @@ if __name__ == '__main__':
 
     # network params
     parser.add_argument('--vlm_model', type=str, default="microsoft/git-base-coco")
+    parser.add_argument('--sim_model', type=str, default="iarfmoose/bert-base-cased-qa-evaluator")
     parser.add_argument('--h5_path', type=str, default="processed")
     parser.add_argument('--task', type=str, choices=['gen_cap', 'gen_inds'], default='gen_cap')
     args = parser.parse_args()
@@ -87,10 +118,7 @@ if __name__ == '__main__':
             raise ValueError('No such captioning model implementations')
 
         # annotation files
-        if args.dataset == 'msrvtt_qa':
-            pass
-
-        elif args.dataset == 'msvd_qa':
+        if args.dataset in ['msvd_qa', 'msrvtt_qa']:
             args.annotation_file = os.path.join(dataset_path, 'annotations/qa_{}.json')
             
             # read H5 file, mapping file
@@ -111,5 +139,18 @@ if __name__ == '__main__':
             # load model
             generate_cap(processor, video_paths, args.num_clips,
                     args.outfile.format(args.dataset, args.feature_type, str(args.num_clips)))
-    
+
+    elif args.task == 'gen_inds':    # text-only models
+        tokenizer = AutoTokenizer.from_pretrained(args.sim_model)
+        model = AutoModelForSequenceClassification.from_pretrained(args.sim_model)
+        
+        if args.dataset == 'msrvtt_qa':
+            pass
+        elif args.dataset == 'msvd_qa':
+            # annotation file, h5 file, mapping file
+            dataset_path = os.path.join(args.dataset_root, args.dataset)
+            anno_path = os.path.join(dataset_path, 'annotations')
+
+            # generate captions
+            generate_inds(tokenizer, model, anno_path, args)
 
