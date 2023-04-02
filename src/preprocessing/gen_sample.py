@@ -39,7 +39,11 @@ def generate_cap(processor, caption_model, anno_path, h5_outfile, vid_map_file, 
             new_ds = []
             for sample in tqdm(ds):
                 new_sample = sample.copy()
-                vid = sample['video'].split('.')[0]
+                if args.dataset == 'msvd_qa':
+                    vid = sample['video'].split('.')[0]
+                elif args.dataset == 'msrvtt_qa':
+                    vid = sample['video_id']
+                    vid = 'video{}'.format(vid)
                 idx = vid2id[vid]
                 
                 # read frms
@@ -57,6 +61,7 @@ def move_to_cuda(input):
 
 def generate_inds(tokenizer, model, anno_path, args):
     model.eval().cuda()
+    ds_rate = args.ds_rate
     for split in ['train', 'val', 'test']:
         read_file = os.path.join(anno_path, 'qa_new_{}.json'.format(split))
         ds = load_json(read_file)
@@ -73,7 +78,9 @@ def generate_inds(tokenizer, model, anno_path, args):
             scores = output[0][:,0] # logits
             
             # get highest scores
-            inds = scores.topk(args.K)[1].detach().cpu().tolist()
+            # FIXME: Downsample 1/2
+            inds = scores[::ds_rate].topk(args.K)[1].detach().cpu().tolist()
+            inds = [i*ds_rate for i in inds]
             inds.sort()
             sample['sampled_inds'] = inds
             
@@ -100,6 +107,7 @@ if __name__ == '__main__':
     parser.add_argument('--sim_model', type=str, default="iarfmoose/bert-base-cased-qa-evaluator")
     parser.add_argument('--h5_path', type=str, default="processed")
     parser.add_argument('--task', type=str, choices=['gen_cap', 'gen_inds'], default='gen_cap')
+    parser.add_argument('--ds_rate', type=int, default=1)
     args = parser.parse_args()
     args.seed = 666
 
@@ -144,9 +152,7 @@ if __name__ == '__main__':
         tokenizer = AutoTokenizer.from_pretrained(args.sim_model)
         model = AutoModelForSequenceClassification.from_pretrained(args.sim_model)
         
-        if args.dataset == 'msrvtt_qa':
-            pass
-        elif args.dataset == 'msvd_qa':
+        if args.dataset in ['msvd_qa', 'msrvtt_qa']:
             # annotation file, h5 file, mapping file
             dataset_path = os.path.join(args.dataset_root, args.dataset)
             anno_path = os.path.join(dataset_path, 'annotations')

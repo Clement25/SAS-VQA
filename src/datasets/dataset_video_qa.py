@@ -57,7 +57,7 @@ class VideoQADataset(BaseDataset):
 
     def __getitem__(self, index):
         # skip error videos:
-        num_retries = 3
+        num_retries = 1
         for _ in range(num_retries):
             vid, examples = self.datalist[index]  # one video with multiple examples
             vid_frm_array = self._load_video_frames(vid)
@@ -68,12 +68,14 @@ class VideoQADataset(BaseDataset):
                             f"Will randomly sample an example as a replacement.")
                 index = random.randint(0, len(self) - 1)
                 continue
-
+            
             examples = [self._get_single_example(e) for e in examples]
+            sampled_inds = examples[0].pop('sampled_inds', None)
             return dict(
                 vid=vid_frm_array,
                 examples=examples,
-                n_examples=len(examples)  # used to create image feature copies.
+                n_examples=len(examples),  # used to create image feature copies.
+                sampled_inds=sampled_inds
             )
         else:
             raise RuntimeError(f"Failed to fetch video after {num_retries} retries.")
@@ -84,6 +86,9 @@ class VideoQADataset(BaseDataset):
             question_id=data["question_id"],
             label=data["answer"]
         )
+        sampled_inds=data.get('sampled_inds', None)
+        if sampled_inds is not None:
+            example['sampled_inds'] = sampled_inds
         if self.task_type in ["action", "transition"]:
             example["options_str_list"] = data["options"]
         elif self.task_type in self.open_ended_qa_names:
@@ -316,8 +321,11 @@ class GITVideoQACollator(BaseQACollator):
         self.add_ans = add_ans
 
     def collate_batch(self, batch):
-        v_collate = default_collate
+        v_collate = ind_collate = default_collate
         visual_inputs = v_collate([d["vid"] for d in batch])  # (B, T, 3, H, W)
+        # sampled frm and inds
+        
+        
         # group data
         text_examples = flat_list_of_lists([d["examples"] for d in batch])
         n_examples_list = [d["n_examples"] for d in batch]  # (B, )
@@ -344,6 +352,11 @@ class GITVideoQACollator(BaseQACollator):
         elif self.samp_policy == 'single':
             i = orig_l // 2
             visual_inputs = visual_inputs[:, i:i+1]
+        elif self.samp_policy == 'question-caption':
+            sampled_inds = torch.LongTensor(list(d["sampled_inds"] for d in batch))
+            vinds = torch.arange(bsz).unsqueeze(-1).expand(bsz, sampled_inds.size(-1))
+            visual_inputs = visual_inputs[vinds, sampled_inds]
+            
         else:
             raise ValueError("Sample strategy can only be chosen from ['uniform', 'random']")
         

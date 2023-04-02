@@ -68,7 +68,8 @@ def mk_tgif_qa_dataloader(task_type, anno_path, ans2label, img_hdf5_dir, cfg, to
                 answer=raw_d["answer"],
                 video_id=raw_d["video"].split('.')[0], # <id>.avi -> ['<id>', 'avi]
                 answer_type=raw_d["answer_type"],
-                question_id=qid
+                question_id=qid,
+                sampled_inds=raw_d["sampled_inds"]
             )
             datalist.append(d)
         LOGGER.info(f"datalist {len(datalist)}")
@@ -85,7 +86,8 @@ def mk_tgif_qa_dataloader(task_type, anno_path, ans2label, img_hdf5_dir, cfg, to
                 answer=raw_d["answer"],
                 video_id='video' + str(raw_d["video_id"]), # <id>.avi -> ['<id>', 'avi]
                 answer_type=answer_type,
-                question_id=qid
+                question_id=qid,
+                sampled_inds=raw_d["sampled_inds"]
             )
             datalist.append(d)
         LOGGER.info(f"datalist {len(datalist)}")

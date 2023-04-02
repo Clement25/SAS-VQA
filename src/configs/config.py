@@ -288,45 +288,6 @@ class SharedConfigs(object):
         args = self.parse_args()
         return args
 
-    def get_video_retrieval_args(self):
-        self.parser.add_argument(
-            "--itm_neg_size", default=1, type=int,
-            help="#negative captions to sample for each image")
-        self.parser.add_argument("--classifier", type=str, default="mlp",
-                                 choices=["mlp", "linear"],
-                                 help="classifier type")
-        self.parser.add_argument(
-            "--cls_hidden_scale", type=int, default=2,
-            help="scaler of the intermediate linear layer dimension for mlp classifier")
-        self.parser.add_argument(
-            "--margin", default=0.2, type=float,
-            help="ranking loss margin")
-        self.parser.add_argument("--loss_type", type=str, default="ce",
-                                 choices=["ce", "rank"],
-                                 help="loss type")
-        self.parser.add_argument("--eval_retrieval_batch_size", type=int, default=256,
-                                 help="batch size for retrieval, since each batch will only have one image, "
-                                      "retrieval allows larger batch size")
-
-        args = self.parse_args()
-        args.num_labels = 1 if args.loss_type == "rank" else 2
-        return args
-
-    def get_vqa_args(self):
-        self.parser.add_argument("--ans2label_path", type=str,
-                                 help="path to {answer: label} file")
-        self.parser.add_argument("--loss_type", type=str, default="bce",
-                                 help="loss type")
-        self.parser.add_argument("--classifier", type=str, default="mlp",
-                                 choices=["mlp", "linear"],
-                                 help="classifier type")
-        self.parser.add_argument(
-            "--cls_hidden_scale", type=int, default=2,
-            help="scaler of the intermediate linear layer dimension for mlp classifier")
-        self.parser.add_argument("--num_labels", type=int, default=3129,
-                                 help="#labels/output-dim for classifier")
-        return self.parse_args()
-
     def get_video_qa_args(self):
         self.parser.add_argument(
             "--task", type=str,
