@@ -116,6 +116,7 @@ if __name__ == '__main__':
     # dataset info-选定数据集
     parser.add_argument('--dataset', default='msvd_qa', choices=['msvd_qa', 'msrvtt_qa', 'svqa'], type=str)
     parser.add_argument('--dataset_root', default='./dataset', type=str)
+    parser.add_argument('--anno_path', default='annotations', type=str)
     parser.add_argument('--question_type', default='none', choices=['none'], type=str)
     # output
     parser.add_argument('--out', dest='outfile', help='output filepath', default="{}_{}_feat.h5", type=str)
@@ -155,7 +156,7 @@ if __name__ == '__main__':
         # load model
 
     elif args.dataset == 'msrvtt_qa':
-        args.annotation_file = os.path.join(dataset_path, '{}_qa.json')
+        args.annotation_file = os.path.join(dataset_path, args.anno_path, '{}_qa.json')
         args.video_dir = os.path.join(dataset_path, 'video')
         video_paths = msrvtt_qa.load_video_paths(args)
         random.shuffle(video_paths)
@@ -175,7 +176,7 @@ if __name__ == '__main__':
                     h5_outfile)
 
     elif args.dataset == 'msvd_qa':
-        args.annotation_file = os.path.join(dataset_path, 'annotations/qa_{}.json')
+        args.annotation_file = os.path.join(dataset_path, args.anno_path, 'qa_{}.json')
         args.video_dir = os.path.join(dataset_path, 'video')
         video_paths = msvd_qa.load_video_paths(args)
         random.shuffle(video_paths)

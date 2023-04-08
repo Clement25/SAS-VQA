@@ -27,9 +27,10 @@ def decode(seq_idx, idx_to_token, delim=None, stop_at_end=True):
         return delim.join(tokens)
 
 CHUNK_SIZE = 256
+INTERVAL = 20
 def sample_representative_frames(frames, model, K=16, W=8, debug_counter=None):
     if W == -1: # adaptive width
-        W = len(frames) // (4 * K)
+        W = len(frames) // INTERVAL
     
     feat_chunks = []
     num_frames = frames.size(0)
@@ -86,7 +87,7 @@ def sample_representative_frames(frames, model, K=16, W=8, debug_counter=None):
             v, idx = lcl_avg[right:r].topk(1)
             heappush(intvs, (-v, (right, r), right+idx))
     
-    res.sort()
+    # res.sort()
     if len(res) < K:
         res = lcl_avg.topk(K)[1]
         debug_counter['Failure'] += 1

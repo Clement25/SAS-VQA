@@ -21,7 +21,7 @@ def get_cap(processor, cap_model, frms):
     bsz = frms.shape[0]
     input_ids = processor(text=['[CLS] ']*bsz, add_special_tokens=False, return_tensors='pt').input_ids.cuda()
     pixel_values = torch.Tensor(frms.reshape(bsz, 3, 224, 224)).cuda()
-    generated_captions = processor.batch_decode(cap_model.generate(pixel_values=pixel_values, input_ids=input_ids, max_length=30), skip_special_tokens=True, max_length=30)
+    generated_captions = processor.batch_decode(cap_model.generate(pixel_values=pixel_values, input_ids=input_ids, max_length=30), skip_special_tokens=True, max_length=50)
     return generated_captions
 
 def generate_cap(processor, caption_model, anno_path, h5_outfile, vid_map_file, args):
@@ -31,46 +31,51 @@ def generate_cap(processor, caption_model, anno_path, h5_outfile, vid_map_file, 
     if isinstance(caption_model, torch.nn.DataParallel):
         caption_model = caption_model.module
     
+    gened_caps = {}
     with h5py.File(h5_outfile, 'r') as fd:
         sampled_frames = fd['sampled_frames']
-        for split in ['train', 'val', 'test']:
-            anno_file = os.path.join(anno_path, 'qa_{}.json'.format(split))
-            ds = load_json(anno_file)
-            new_ds = []
-            for sample in tqdm(ds):
-                new_sample = sample.copy()
-                if args.dataset == 'msvd_qa':
-                    vid = sample['video'].split('.')[0]
-                elif args.dataset == 'msrvtt_qa':
-                    vid = sample['video_id']
-                    vid = 'video{}'.format(vid)
-                idx = vid2id[vid]
-                
-                # read frms
-                frms = sampled_frames[idx]
-                caps = get_cap(processor, caption_model, frms)    
-                new_sample['caps'] = caps
-                
-                new_ds.append(new_sample)
+        i = 0
+        for frms in tqdm(sampled_frames):
+            # frms = sampled_frames[i]
+            caps = get_cap(processor, caption_model, frms)
+            gened_caps[i] = caps
+            i += 1
 
-            new_anno_file = os.path.join(anno_path, 'qa_new_{}.json'.format(split))
-            save_json(new_ds, new_anno_file)
+    new_anno_file = os.path.join(anno_path, 'frame_captions.json')
+    save_json(gened_caps, new_anno_file)
 
 def move_to_cuda(input):
     return {k:v.cuda() for k, v in input.items()}
 
-def generate_inds(tokenizer, model, anno_path, args):
+def generate_inds(tokenizer, model, anno_path, vid_map_file, args):
     model.eval().cuda()
     ds_rate = args.ds_rate
+    cap_src_file = os.path.join(anno_path, 'frame_captions.json')
+
+    vid2id = load_json(vid_map_file)
+    all_captions = load_json(cap_src_file)
+
+    if args.dataset == 'msvd_qa':
+        vid_name = 'video'
+        qid_temp = 'video{}'
+    elif args.dataset == 'msrvtt_qa':
+        vid_name = 'video_id'
+        qid_temp = '{}'
+    else:
+        raise ValueError('Invalid dataset name! Current supported dataset msvd_qa, msrvtt_qa')
+
     for split in ['train', 'val', 'test']:
-        read_file = os.path.join(anno_path, 'qa_new_{}.json'.format(split))
+        read_file = os.path.join(anno_path, 'qa_{}.json'.format(split))
         ds = load_json(read_file)
         new_ds = []
         for sample in tqdm(ds):
             question = sample['question']
-            captions = sample.pop('caps')
+            
             # calculate the score between question and captions
-            # input_str = ["[CLS] " + question + " [SEP] " + caption + " [SEP]" for caption in captions]
+            vid = sample[vid_name]
+            query_id =  qid_temp.format(vid)
+            captions = all_captions[query_id] 
+            
             bsz = len(captions)
             inputs = tokenizer(text=[question]*bsz, text_pair=captions, padding=True, truncation=True, return_tensors='pt')
             inputs = move_to_cuda(inputs)
@@ -81,7 +86,7 @@ def generate_inds(tokenizer, model, anno_path, args):
             # FIXME: Downsample 1/2
             inds = scores[::ds_rate].topk(args.K)[1].detach().cpu().tolist()
             inds = [i*ds_rate for i in inds]
-            inds.sort()
+            # do not sort here so that we can retrive the top-K important frames
             sample['sampled_inds'] = inds
             
             new_ds.append(sample)
@@ -93,6 +98,7 @@ if __name__ == '__main__':
     # dataset info
     parser.add_argument('--dataset', default='msvd_qa', choices=['msvd_qa', 'msrvtt_qa', 'svqa'], type=str)
     parser.add_argument('--dataset_root', default='./dataset', type=str)
+    parser.add_argument('--anno_path', default='annotations', type=str)
     # output
     parser.add_argument('--out', dest='outfile', help='output filepath', default="{}_video_feat.h5", type=str)
 
@@ -126,15 +132,16 @@ if __name__ == '__main__':
             raise ValueError('No such captioning model implementations')
 
         # annotation files
+
         if args.dataset in ['msvd_qa', 'msrvtt_qa']:
             args.annotation_file = os.path.join(dataset_path, 'annotations/qa_{}.json')
             
             # read H5 file, mapping file
             dataset_path = os.path.join(args.dataset_root, args.dataset)
             h5_path = os.path.join(dataset_path, args.h5_path)
-            anno_path = os.path.join(dataset_path, 'annotations')
-            h5_outfile = os.path.join(h5_path, args.outfile.format(args.dataset))
             vid_map_file = os.path.join(h5_path, 'vidmapping.json')
+            h5_outfile = os.path.join(h5_path, args.outfile.format(args.dataset))
+            anno_path = os.path.join(dataset_path, args.anno_path)
             
             # generate h5 file
             generate_cap(processor, caption_model, anno_path, h5_outfile, vid_map_file, args)
@@ -155,8 +162,10 @@ if __name__ == '__main__':
         if args.dataset in ['msvd_qa', 'msrvtt_qa']:
             # annotation file, h5 file, mapping file
             dataset_path = os.path.join(args.dataset_root, args.dataset)
-            anno_path = os.path.join(dataset_path, 'annotations')
+            anno_path = os.path.join(dataset_path, args.anno_path)
 
+            h5_path = os.path.join(dataset_path, args.h5_path)
+            vid_map_file = os.path.join(h5_path, 'vidmapping.json')
             # generate captions
-            generate_inds(tokenizer, model, anno_path, args)
+            generate_inds(tokenizer, model, anno_path, vid_map_file, args)
 

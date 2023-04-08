@@ -86,9 +86,10 @@ def mk_tgif_qa_dataloader(task_type, anno_path, ans2label, img_hdf5_dir, cfg, to
                 answer=raw_d["answer"],
                 video_id='video' + str(raw_d["video_id"]), # <id>.avi -> ['<id>', 'avi]
                 answer_type=answer_type,
-                question_id=qid,
-                sampled_inds=raw_d["sampled_inds"]
+                question_id=qid
             )
+            if 'sampled_inds' in raw_d:
+                d['sampled_inds']=raw_d["sampled_inds"]
             datalist.append(d)
         LOGGER.info(f"datalist {len(datalist)}")
     else:
@@ -308,7 +309,10 @@ def validate(model, val_loader, cfg, eval_score=True, processor=None, ans2label=
         
         # (B * max(num_frm), C, H, W)
         losses = []
-        outputs = forward_step(model, batch, cfg)
+
+        with torch.autocast(device_type='cuda', dtype=torch.float16):
+            outputs = forward_step(model, batch, cfg)
+            
         if flag_prtr in [0, 1]:
             # cross entropy
             logits = outputs["logits"].cpu()
@@ -388,22 +392,8 @@ def start_training(cfg):
     # n_gpu = hvd.size()
     cfg.n_gpu = n_gpu = 1
     device = torch.device("cuda")
-    # torch.cuda.set_device(hvd.local_rank())
-    # if hvd.rank() != 0:
-    #     LOGGER.disabled = True
-    LOGGER.info("device: {} n_gpu: {}, rank: {}, "
-                "16-bits training: {}".format(
-                    device, n_gpu, 0, bool(cfg.fp16)))
-
-
-    if 'blip' in cfg.model.pretrained_model.lower():
-        flag_prtr = 0
-        anno_files = (cfg.train_datasets[0].txt,)
-        ans2label = build_common_answer_dict(anno_files, 1000)
-    elif 'clip' in cfg.model.pretrained_model.lower():
-        flag_prtr = 1
-        ans2label = None
-    elif 'git' in cfg.model.pretrained_model.lower():
+    
+    if 'git' in cfg.model.pretrained_model.lower():
         flag_prtr = 2
         anno_files = (cfg.train_datasets[0].txt,)
         ans2label = build_common_answer_dict(anno_files, 1000)
@@ -420,8 +410,8 @@ def start_training(cfg):
     # setup dataset and model
     train_loader, val_loader, test_loader = setup_dataloaders(cfg, tokenizer)
     model = setup_model(cfg, device=device)
-    model.train()
 
+    model.train()
     all_params =  [p for p in model.parameters() if p.requires_grad]
     optimizer = getattr(torch.optim, cfg.optim)(
         params = all_params, lr = cfg.learning_rate
@@ -479,18 +469,16 @@ def start_training(cfg):
         validate(model, test_loader, cfg, flag_prtr=flag_prtr, processor=tokenizer, ans2label=ans2label)
     
     total_correct = total_preds = 0
+    
+    scaler = torch.cuda.amp.GradScaler()
     for step, batch in enumerate(InfiniteIterator(train_loader)):
         # forward pass
         del batch["question_ids"]
-        outputs = forward_step(model, batch, cfg)
         
-        if flag_prtr == 1:
-            loss = outputs["loss"].mean()
-            logits = outputs["logits"]
-            preds = logits.argmax(dim=-1)
-            total_correct += (preds == batch["labels"]).sum()
-            total_preds += len(preds)
-        elif flag_prtr == 0:
+        with torch.autocast(device_type='cuda', dtype=torch.float16):
+            outputs = forward_step(model, batch, cfg)
+        
+        if flag_prtr <= 1:
             loss = outputs["loss"].mean()
             logits = outputs["logits"]
             preds = logits.argmax(dim=-1)
@@ -498,9 +486,10 @@ def start_training(cfg):
             total_preds += len(preds)
         elif flag_prtr == 2:
             loss = outputs["loss"].mean()
-            
+
+        scaler.scale(loss).backward()
+        # Scales the loss, and calls backward()
         running_loss(loss.item())
-        loss.backward()
 
         # optimizer
         if (step + 1) % cfg.gradient_accumulation_steps == 0:
@@ -511,22 +500,15 @@ def start_training(cfg):
             n_epoch = int(1. * total_train_batch_size * global_step
                           / total_n_examples)
 
-            # update model params
-            if cfg.grad_norm != -1:
-                grad_norm = torch.nn.utils.clip_grad_norm_(all_params, max_norm=cfg.grad_norm)
-                TB_LOGGER.add_scalar(
-                    "train/grad_norm", grad_norm, global_step)
-            TB_LOGGER.step()
-
-            # Check if there is None grad
             none_grads = [
                 p[0] for p in model.named_parameters()
                 if p[1].requires_grad and p[1].grad is None]
-            # assert len(none_grads) == 0
 
-            optimizer.step()
+            # optimizer.step()
+            scaler.step(optimizer)
+            scaler.update()
+            
             optimizer.zero_grad()
-            # restorer.step()
             pbar.update(1)
 
             # checkpoint

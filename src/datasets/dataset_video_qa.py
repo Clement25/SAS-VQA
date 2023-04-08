@@ -343,6 +343,7 @@ class GITVideoQACollator(BaseQACollator):
         if self.samp_policy == 'uniform':
             T = orig_l // self.nframe + (1 if orig_l % self.nframe > 0 else 0)
             inds = [int(i*self.nframe) for i in range(T)]
+            # inds = list(range(0, len(visual_inputs), self.nframe))
             visual_inputs = visual_inputs[:,inds]
         elif self.samp_policy == 'random':
             rand_sample = torch.arange(orig_l).float().expand(bsz, -1)
@@ -353,10 +354,11 @@ class GITVideoQACollator(BaseQACollator):
             i = orig_l // 2
             visual_inputs = visual_inputs[:, i:i+1]
         elif self.samp_policy == 'question-caption':
-            sampled_inds = torch.LongTensor(list(d["sampled_inds"] for d in batch))
+            sampled_inds = torch.LongTensor(list(d["sampled_inds"][:self.nframe] for d in batch))
             vinds = torch.arange(bsz).unsqueeze(-1).expand(bsz, sampled_inds.size(-1))
             visual_inputs = visual_inputs[vinds, sampled_inds]
-            
+        elif self.samp_policy == 'importance':
+            visual_inputs = visual_inputs[:,:self.nframe]
         else:
             raise ValueError("Sample strategy can only be chosen from ['uniform', 'random']")
         
