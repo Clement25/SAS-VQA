@@ -1,2 +1,2 @@
 # SAS-VQA
-Self-adaptive Sampled Video Question Answering
+Self-adaptive Sampling for Efficient Video Question Answering
